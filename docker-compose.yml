@@ -1,0 +1,61 @@
+version: '3.9'
+
+services:
+  # ── MongoDB ──────────────────────────────────────────────────────────────────
+  mongo:
+    image: mongo:7
+    container_name: doa-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: dead-or-alive
+    ports:
+      - '27017:27017'
+    networks:
+      - doa-net
+
+  # ── Game Server ───────────────────────────────────────────────────────────────
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: doa-server
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment:
+      PORT: 3001
+      MONGODB_URI: mongodb://mongo:27017/dead-or-alive
+      JWT_SECRET: ${JWT_SECRET:-change-this-in-production-please}
+      JWT_EXPIRES_IN: 7d
+      CLIENT_URL: ${CLIENT_URL:-http://localhost:5173}
+      NODE_ENV: production
+    ports:
+      - '3001:3001'
+    networks:
+      - doa-net
+
+  # ── React Client ──────────────────────────────────────────────────────────────
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:3001/api}
+        VITE_SOCKET_URL: ${VITE_SOCKET_URL:-http://localhost:3001}
+    container_name: doa-client
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - '80:80'
+    networks:
+      - doa-net
+
+volumes:
+  mongo_data:
+
+networks:
+  doa-net:
+    driver: bridge

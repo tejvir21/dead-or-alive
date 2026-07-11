@@ -23,10 +23,8 @@ import AdminPage from "./pages/AdminPage";
 import ProfilePage from "./pages/ProfilePage";
 import NotFoundPage from "./pages/NotFoundPage";
 
-// import { Analytics } from "@vercel/analytics/react";
-
 // Notification component (if you have one)
-// import Notification from './components/ui/Notification';
+// import Notification from "./components/ui/Notification";
 
 export default function App() {
   const {
@@ -55,9 +53,8 @@ export default function App() {
 
   return (
     <BrowserRouter>
+      {/* Notification component */}
       {/* <Notification /> */}
-
-      {/* <Analytics /> */}
       <Routes>
         {/* ── Public routes ──────────────────────────────────────────────── */}
         <Route path="/" element={<HomePage />} />

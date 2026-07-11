@@ -212,14 +212,23 @@ function initSocketHandlers(io) {
           socket.emit('reconnected', { session: session.toPublicState() });
           io.to(code).emit('playerReconnected', { username: socket.player.username, session: session.toPublicState() });
 
-          // Resend current state if game is in progress
+          // Resend current state with REMAINING time (not full duration)
+          // so a mid-game refresh doesn't restart the timer from 30s
           if (session.status === 'in_progress') {
             const room = session.getSafeCurrentRoom();
+            const settings = await GameSettings.getSingleton();
+
             if (room && session.roundPhase === 'puzzle') {
-              socket.emit('roomStarted', { ...room, totalRooms: session.rooms.length });
+              const fullTimer = settings.puzzleTimerSeconds || 30;
+              const elapsed   = Math.floor((Date.now() - (session.puzzleStartTime || Date.now())) / 1000);
+              const remaining = Math.max(1, fullTimer - elapsed);
+              socket.emit('roomStarted', { ...room, totalRooms: session.rooms.length, timerSeconds: remaining });
+
             } else if (session.roundPhase === 'door_selection') {
-              const settings = await GameSettings.getSingleton();
-              socket.emit('doorSelectionStarted', { timerSeconds: settings.doorTimerSeconds || 30 });
+              const fullTimer = settings.doorTimerSeconds || 30;
+              const elapsed   = Math.floor((Date.now() - (session.doorStartTime || Date.now())) / 1000);
+              const remaining = Math.max(1, fullTimer - elapsed);
+              socket.emit('doorSelectionStarted', { timerSeconds: remaining, session: session.toPublicState() });
             }
           }
           return;

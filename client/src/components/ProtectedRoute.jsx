@@ -11,15 +11,14 @@
  *   3a. Tokens found → render children (stay on page)
  *   3b. No tokens → redirect to /login
  */
-
-import React from "react";
-import { Navigate } from "react-router-dom";
-import useAuthStore from "../store/authStore";
+import React from 'react';
+import { Navigate } from 'react-router-dom';
+import useAuthStore from '../store/authStore';
 
 export default function ProtectedRoute({ children }) {
-  const _hasHydrated = useAuthStore((s) => s._hasHydrated);
-  const accessToken = useAuthStore((s) => s.accessToken);
-  const player = useAuthStore((s) => s.player);
+  const _hasHydrated = useAuthStore(s => s._hasHydrated);
+  const accessToken  = useAuthStore(s => s.accessToken);
+  const player       = useAuthStore(s => s.player);
 
   // Step 1: wait — don't redirect yet, localStorage hasn't been read
   if (!_hasHydrated) {

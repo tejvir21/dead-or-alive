@@ -23,7 +23,7 @@ import AdminPage from "./pages/AdminPage";
 import ProfilePage from "./pages/ProfilePage";
 import NotFoundPage from "./pages/NotFoundPage";
 
-import { Analytics } from "@vercel/analytics/react";
+// import { Analytics } from "@vercel/analytics/react";
 
 // Notification component (if you have one)
 // import Notification from './components/ui/Notification';
@@ -57,7 +57,7 @@ export default function App() {
     <BrowserRouter>
       {/* <Notification /> */}
 
-      <Analytics />
+      {/* <Analytics /> */}
       <Routes>
         {/* ── Public routes ──────────────────────────────────────────────── */}
         <Route path="/" element={<HomePage />} />

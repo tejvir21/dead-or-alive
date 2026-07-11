@@ -1,232 +1,272 @@
 /**
- * WaitingRoomPage — Pre-game lobby where players get ready
+ * WaitingRoomPage.jsx — Fixed
+ *
+ * Handles the pre-game lobby state:
+ *   - Shows who has joined
+ *   - Host can click "Start Game" (or it auto-starts when all ready)
+ *   - Navigates to /game/:roomCode only after gameStarted fires
+ *     (guaranteeing GamePage is mounted before roomStarted fires)
+ *
+ * Bugs fixed vs original:
+ *   - navigateRef stable closure (navigate captured in ref, not stale closure)
+ *   - uses accessToken via apiFetch, not old `token` field
+ *   - double-join guard: only emits joinRoom once on mount
  */
-import React, { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { connectSocket, emit } from '../socket/socketClient';
 import useGameStore from '../store/gameStore';
 import useAuthStore from '../store/authStore';
-import { emit, getSocket } from '../socket/socketClient';
-import Chat from '../components/lobby/Chat';
 
 export default function WaitingRoomPage() {
   const { roomCode } = useParams();
   const navigate = useNavigate();
-  const navigateRef = useRef(navigate); // stable ref to avoid stale closure
-  navigateRef.current = navigate;
+  const navigateRef = useRef(navigate); // stable ref — avoids stale closure in socket handlers
+  useEffect(() => { navigateRef.current = navigate; }, [navigate]);
 
   const { player } = useAuthStore();
-  const {
-    session, countdown, resetGame, setCountdown,
-  } = useGameStore();
+  const { updateSession, setRoomCode } = useGameStore();
+  const session = useGameStore(s => s.session);
 
+  const [countdown, setCountdown] = useState(null);
+  const [error, setError] = useState('');
   const [isReady, setIsReady] = useState(false);
-  const [joining, setJoining] = useState(false);
+  const hasJoinedRef = useRef(false); // double-join guard
 
+  const code = (roomCode || '').toUpperCase();
+  const players = session?.players || [];
+  const isHost = session?.createdBy === player?._id ||
+                 session?.createdBy === player?.id;
+  const allReady = players.length > 0 && players.every(p => p.ready);
+  const canStart = isHost && players.length >= (session?.minPlayers || 1);
+
+  // ── Join room on mount ───────────────────────────────────────────────────
   useEffect(() => {
-    const socket = getSocket();
-    if (!socket) { navigateRef.current('/lobby'); return; }
+    if (!code || hasJoinedRef.current) return;
+    hasJoinedRef.current = true;
+    setRoomCode(code);
 
-    // Join room if we don't have session (e.g. direct URL or page refresh)
-    if (!session && !joining) {
-      setJoining(true);
-      emit.joinRoom(roomCode);
+    const socket = connectSocket();
+    if (!socket) return;
+
+    // If socket isn't connected yet, wait for connect then join
+    if (socket.connected) {
+      emit.joinRoom(code);
+    } else {
+      socket.once('connect', () => emit.joinRoom(code));
     }
+  }, [code]);
 
-    // Navigate to game page when server fires gameStarted
-    const onGameStarted = () => {
-      navigateRef.current(`/game/${roomCode}`);
+  // ── Socket event listeners ───────────────────────────────────────────────
+  useEffect(() => {
+    const socket = connectSocket();
+    if (!socket) return;
+
+    const onJoinedRoom = ({ session }) => {
+      updateSession(session);
     };
 
-    const onCountdownStarted = ({ seconds }) => setCountdown(seconds);
-    const onCountdownTick = ({ seconds }) => setCountdown(seconds);
+    const onPlayerJoined = ({ username, session }) => {
+      updateSession(session);
+    };
 
-    socket.on('gameStarted', onGameStarted);
-    socket.on('countdownStarted', onCountdownStarted);
-    socket.on('countdownTick', onCountdownTick);
+    const onPlayerLeft = ({ username, session }) => {
+      updateSession(session);
+    };
+
+    const onPlayerReadyUpdate = ({ session }) => {
+      updateSession(session);
+    };
+
+    const onHostTransferred = ({ newHost }) => {
+      // Refresh session
+    };
+
+    const onCountdownStarted = ({ seconds }) => {
+      setCountdown(seconds);
+    };
+
+    const onCountdownTick = ({ seconds }) => {
+      setCountdown(seconds);
+    };
+
+    // ── KEY FIX: gameStarted → navigate to game page ─────────────────────
+    // Only navigate here (not in LobbyPage) so GamePage is already mounted
+    // before roomStarted fires 2 seconds later
+    const onGameStarted = ({ session: s }) => {
+      if (s) updateSession(s);
+      setCountdown(null);
+      navigateRef.current(`/game/${code}`);
+    };
+
+    const onReconnected = ({ session }) => {
+      updateSession(session);
+      // If game already in progress, go straight to game page
+      if (session?.status === 'in_progress') {
+        navigateRef.current(`/game/${code}`);
+      }
+    };
+
+    const onError = ({ message }) => {
+      setError(message);
+    };
+
+    socket.on('joinedRoom',        onJoinedRoom);
+    socket.on('reconnected',       onReconnected);
+    socket.on('playerJoined',      onPlayerJoined);
+    socket.on('playerLeft',        onPlayerLeft);
+    socket.on('playerReadyUpdate', onPlayerReadyUpdate);
+    socket.on('hostTransferred',   onHostTransferred);
+    socket.on('countdownStarted',  onCountdownStarted);
+    socket.on('countdownTick',     onCountdownTick);
+    socket.on('gameStarted',       onGameStarted);
+    socket.on('error',             onError);
 
     return () => {
-      socket.off('gameStarted', onGameStarted);
-      socket.off('countdownStarted', onCountdownStarted);
-      socket.off('countdownTick', onCountdownTick);
+      socket.off('joinedRoom',        onJoinedRoom);
+      socket.off('reconnected',       onReconnected);
+      socket.off('playerJoined',      onPlayerJoined);
+      socket.off('playerLeft',        onPlayerLeft);
+      socket.off('playerReadyUpdate', onPlayerReadyUpdate);
+      socket.off('hostTransferred',   onHostTransferred);
+      socket.off('countdownStarted',  onCountdownStarted);
+      socket.off('countdownTick',     onCountdownTick);
+      socket.off('gameStarted',       onGameStarted);
+      socket.off('error',             onError);
     };
-  }, [roomCode]); // only re-run if roomCode changes
-
-  const players = session?.players || [];
-  const minPlayers = session?.minPlayers ?? 1;
-
-  // Host = first player in list whose id matches ours, or createdBy matches
-  const myEntry = players.find(p => p.username === player?.username);
-  const isHost = session?.createdBy === player?.id
-    || (players.length > 0 && players[0]?.username === player?.username);
-
-  const canStart = players.length >= minPlayers;
+  }, [code]);
 
   const handleReady = () => {
-    if (isReady) return;
     setIsReady(true);
-    emit.playerReady(roomCode);
+    emit.playerReady(code);
   };
 
   const handleStart = () => {
-    emit.startGame(roomCode);
+    emit.startGame(code);
   };
 
   const handleLeave = () => {
-    emit.leaveRoom(roomCode);
-    resetGame();
-    navigateRef.current('/lobby');
+    emit.leaveRoom(code);
+    navigate('/lobby');
   };
 
   return (
-    <div className="min-h-screen bg-void-900 flex flex-col">
-      <div
-        className="fixed inset-0 opacity-20 pointer-events-none"
-        style={{
-          backgroundImage: 'linear-gradient(rgba(0,255,136,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,136,0.04) 1px, transparent 1px)',
-          backgroundSize: '40px 40px',
-        }}
-      />
-
-      <div className="relative z-10 flex-1 flex flex-col max-w-5xl mx-auto w-full px-4 py-8">
+    <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center p-6">
+      <div className="w-full max-w-lg space-y-6">
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <p className="font-mono text-xs text-gray-600 mb-1">WAITING ROOM</p>
-            <h1 className="font-display text-4xl tracking-wider">
-              <span className="text-gray-600">ROOM </span>
-              <span className="neon-text tracking-[0.2em]">{roomCode}</span>
-            </h1>
-          </div>
-          <button onClick={handleLeave} className="btn-ghost text-sm text-red-400/70 hover:text-red-400">
-            LEAVE
-          </button>
+        <div className="text-center">
+          <p className="font-mono text-xs text-gray-600 uppercase tracking-widest mb-1">Waiting Room</p>
+          <h1 className="font-display text-3xl font-bold text-green-400 tracking-wider">
+            {code}
+          </h1>
+          {session && (
+            <p className="font-mono text-xs text-gray-600 mt-2">
+              {players.length}/{session.maxPlayers} players
+              {' · '}
+              {session.difficultyCurve || 'stepped'} curve
+            </p>
+          )}
         </div>
 
         {/* Countdown overlay */}
         <AnimatePresence>
           {countdown !== null && (
             <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0 }}
+              className="text-center py-4"
             >
-              <motion.div
-                key={countdown}
-                initial={{ scale: 2, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.5, opacity: 0 }}
-                transition={{ duration: 0.4 }}
-                className="text-center"
-              >
-                {countdown > 0 ? (
-                  <>
-                    <div className="font-display text-[160px] neon-text leading-none">{countdown}</div>
-                    <div className="font-display text-2xl tracking-[0.4em] text-white/50">GET READY</div>
-                  </>
-                ) : (
-                  <div className="font-display text-[80px] neon-text leading-none tracking-wider">GO!</div>
-                )}
-              </motion.div>
+              <p className="font-mono text-xs text-gray-500 uppercase tracking-widest mb-2">
+                Game starting in
+              </p>
+              <p className="font-display text-8xl font-black text-green-400">
+                {countdown}
+              </p>
             </motion.div>
           )}
         </AnimatePresence>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1">
-          {/* Players list */}
-          <div className="lg:col-span-2 space-y-4">
-            <div className="glass-card p-6">
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="font-display text-xl tracking-wider text-white">
-                  PLAYERS{' '}
-                  <span className="text-green-500">{players.length}</span>
-                  <span className="text-gray-600">/{session?.maxPlayers || 8}</span>
-                </h2>
-                <span className="font-mono text-xs text-gray-600">
-                  Min {minPlayers} to start
-                </span>
-              </div>
-
-              <div className="space-y-2">
-                {players.map((p, i) => (
-                  <motion.div
-                    key={p.id || p.username}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.05 }}
-                    className={`flex items-center justify-between px-4 py-3 rounded border ${
-                      p.username === player?.username
-                        ? 'bg-green-900/20 border-green-700/40'
-                        : 'bg-white/3 border-white/5'
-                    }`}
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full ${p.ready ? 'bg-green-400' : 'bg-gray-600'}`} />
-                      <span className="font-body font-semibold text-white">
-                        {p.username}
-                        {p.username === player?.username && (
-                          <span className="ml-2 text-xs text-gray-500">(you)</span>
-                        )}
-                      </span>
-                      {i === 0 && (
-                        <span className="text-xs font-mono text-yellow-500/70 border border-yellow-700/40 px-1 rounded">HOST</span>
-                      )}
-                    </div>
-                    <span className={`text-xs font-mono ${p.ready ? 'text-green-400' : 'text-gray-600'}`}>
-                      {p.ready ? '✓ READY' : 'NOT READY'}
+        {/* Player list */}
+        {countdown === null && (
+          <div className="glass-card p-5 space-y-3">
+            <h2 className="font-mono text-xs text-gray-500 uppercase tracking-widest">
+              Players
+            </h2>
+            {players.length === 0 ? (
+              <p className="font-mono text-xs text-gray-700">Waiting for players…</p>
+            ) : (
+              players.map(p => (
+                <div key={p.id || p.username}
+                  className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${p.alive !== false ? 'bg-green-500' : 'bg-gray-700'}`} />
+                    <span className="font-mono text-sm text-white">
+                      {p.username}
                     </span>
-                  </motion.div>
-                ))}
-
-                {/* Empty slots */}
-                {Array.from({ length: Math.max(0, (session?.maxPlayers || 8) - players.length) }).map((_, i) => (
-                  <div key={`empty-${i}`} className="flex items-center px-4 py-3 rounded border border-white/5 border-dashed">
-                    <div className="w-2 h-2 rounded-full bg-gray-800 mr-3" />
-                    <span className="font-mono text-xs text-gray-700">WAITING FOR PLAYER…</span>
+                    {p.id === (session?.createdBy) && (
+                      <span className="font-mono text-[10px] text-yellow-500 border border-yellow-800 px-1 rounded">
+                        HOST
+                      </span>
+                    )}
+                    {p.isVerified && (
+                      <span className="font-mono text-[10px] text-blue-400 border border-blue-800 px-1 rounded">
+                        ✓
+                      </span>
+                    )}
                   </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex gap-3 flex-wrap">
-              {/* Ready button — show if not yet ready */}
-              {!isReady && !myEntry?.ready && (
-                <button onClick={handleReady} className="btn-primary flex-1 min-w-[140px]">
-                  ✓ READY UP
-                </button>
-              )}
-
-              {/* Ready state display */}
-              {(isReady || myEntry?.ready) && (
-                <div className="flex-1 glass-card px-6 py-3 text-center font-display tracking-wider text-green-400 border border-green-700/40">
-                  ✓ READY
+                  <span className={`font-mono text-xs ${p.ready ? 'text-green-400' : 'text-gray-700'}`}>
+                    {p.ready ? '✓ READY' : 'waiting…'}
+                  </span>
                 </div>
-              )}
-
-              {/* Host start button — always visible to host when enough players */}
-              {isHost && canStart && (
-                <button onClick={handleStart} className="btn-primary flex-1 min-w-[140px]">
-                  ▶ START GAME
-                </button>
-              )}
-            </div>
-
-            {/* Not enough players warning */}
-            {isHost && !canStart && (
-              <p className="font-mono text-xs text-gray-600 text-center">
-                Need {minPlayers - players.length} more player(s) to start
-              </p>
+              ))
             )}
           </div>
+        )}
 
-          {/* Chat */}
-          <div className="lg:col-span-1">
-            <Chat roomCode={roomCode} />
+        {/* Error */}
+        {error && (
+          <p className="font-mono text-xs text-red-400 text-center">⚠ {error}</p>
+        )}
+
+        {/* Actions */}
+        {countdown === null && (
+          <div className="space-y-3">
+            {/* Ready button (non-hosts) */}
+            {!isHost && !isReady && (
+              <button onClick={handleReady} className="btn-primary w-full">
+                ✓ I'M READY
+              </button>
+            )}
+            {!isHost && isReady && (
+              <div className="text-center font-mono text-sm text-green-400 py-3">
+                ✓ Ready! Waiting for host to start…
+              </div>
+            )}
+
+            {/* Start button (host only) */}
+            {isHost && (
+              <button
+                onClick={handleStart}
+                disabled={!canStart}
+                className="btn-primary w-full disabled:opacity-50 text-lg py-4"
+              >
+                {players.length < (session?.minPlayers || 1)
+                  ? `Need ${session?.minPlayers || 1}+ player(s) to start`
+                  : '▶ START GAME'}
+              </button>
+            )}
+
+            <button onClick={handleLeave}
+              className="w-full font-mono text-xs text-gray-700 hover:text-red-400 transition-colors py-2">
+              ← Leave Room
+            </button>
           </div>
-        </div>
+        )}
+
       </div>
     </div>
   );
 }
-

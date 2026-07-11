@@ -10,13 +10,13 @@
 
 ```bash
 # Clone and run setup (installs deps, creates .env, seeds DB)
-git clone <your-repo> dead-or-alive && cd dead-or-alive
+git clone https://github.com/tejvir21/dead-or-alive.git dead-or-alive && cd dead-or-alive
 bash setup.sh
 
 # Terminal 1
 cd server && npm run dev
 
-# Terminal 2  
+# Terminal 2
 cd client && npm run dev
 # → http://localhost:5173
 ```
@@ -25,16 +25,16 @@ cd client && npm run dev
 
 ## Table of Contents
 
-1. [Overview](#overview)  
-2. [Tech Stack](#tech-stack)  
-3. [Project Structure](#project-structure)  
-4. [Environment Variables](#environment-variables)  
-5. [Admin System](#admin-system)  
-6. [API Reference](#api-reference)  
-7. [Socket Events](#socket-events)  
-8. [Game Architecture](#game-architecture)  
-9. [Clue System](#clue-system)  
-10. [Docker Deployment](#docker-deployment)  
+1. [Overview](#overview)
+2. [Tech Stack](#tech-stack)
+3. [Project Structure](#project-structure)
+4. [Environment Variables](#environment-variables)
+5. [Admin System](#admin-system)
+6. [API Reference](#api-reference)
+7. [Socket Events](#socket-events)
+8. [Game Architecture](#game-architecture)
+9. [Clue System](#clue-system)
+10. [Docker Deployment](#docker-deployment)
 11. [Anti-Cheat Design](#anti-cheat-design)
 
 ---
@@ -53,15 +53,15 @@ Login → Lobby → Create/Join Room → Waiting Room → Countdown →
 
 ## Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
+| Layer    | Technology                                  |
+| -------- | ------------------------------------------- |
 | Frontend | React 18 + Vite, TailwindCSS, Framer Motion |
-| State | Zustand (persisted auth, ephemeral game) |
-| Realtime | Socket.io client + server |
-| Backend | Node.js + Express.js |
-| Database | MongoDB + Mongoose |
-| Auth | JWT (bcrypt passwords, env-based admin IDs) |
-| Deploy | Docker Compose + Nginx |
+| State    | Zustand (persisted auth, ephemeral game)    |
+| Realtime | Socket.io client + server                   |
+| Backend  | Node.js + Express.js                        |
+| Database | MongoDB + Mongoose                          |
+| Auth     | JWT (bcrypt passwords, env-based admin IDs) |
+| Deploy   | Docker Compose + Nginx                      |
 
 ---
 
@@ -165,14 +165,16 @@ VITE_SOCKET_URL=http://localhost:3001
 
 1. Register an account normally via the UI
 2. Find your player ID:
+
    ```bash
    # Using mongosh
    mongosh dead-or-alive --eval "db.players.find({},{_id:1,username:1}).pretty()"
-   
+
    # Or via curl (must be logged in)
    curl http://localhost:3001/api/auth/me \
      -H "Authorization: Bearer <your-jwt-token>"
    ```
+
 3. Add to `server/.env`:
    ```env
    ADMIN_IDS=64abc123def456789abc1234
@@ -180,6 +182,7 @@ VITE_SOCKET_URL=http://localhost:3001
 4. Restart the server — no DB changes needed
 
 **Method 2 — DB role field:**
+
 ```js
 // mongosh
 use dead-or-alive
@@ -193,21 +196,22 @@ Both methods work simultaneously. `ADMIN_IDS` takes priority.
 ### Admin Panel UI
 
 Once you're admin, a **⚙ ADMIN** button appears in:
+
 - The Lobby header
 - The Home page (when logged in)
 - Your Profile page
 
 The Admin Panel (`/admin`) provides:
 
-| Section | What you can do |
-|---------|----------------|
-| **Stats bar** | Total clues, active/inactive counts, per-category breakdown |
-| **Clue list** | Filter by category/difficulty/search, view all clue details |
+| Section         | What you can do                                               |
+| --------------- | ------------------------------------------------------------- |
+| **Stats bar**   | Total clues, active/inactive counts, per-category breakdown   |
+| **Clue list**   | Filter by category/difficulty/search, view all clue details   |
 | **Inline edit** | Edit any clue's template, answer rule, flavor text, variables |
-| **Toggle** | Enable or disable individual clues without deleting |
-| **Delete** | Permanently remove a clue (with confirmation prompt) |
-| **Create** | Full clue creation form with variable editor |
-| **Bulk import** | Paste JSON to import many clues at once |
+| **Toggle**      | Enable or disable individual clues without deleting           |
+| **Delete**      | Permanently remove a clue (with confirmation prompt)          |
+| **Create**      | Full clue creation form with variable editor                  |
+| **Bulk import** | Paste JSON to import many clues at once                       |
 
 ---
 
@@ -228,6 +232,7 @@ List clues with optional filtering.
 | `includeInactive` | any | Include disabled clues |
 
 **Response:**
+
 ```json
 {
   "clues": [ ...clue objects ],
@@ -244,6 +249,7 @@ Get a single clue by MongoDB ID.
 Create one clue.
 
 **Body:**
+
 ```json
 {
   "category": "number",
@@ -263,6 +269,7 @@ Create one clue.
 Import multiple clues at once.
 
 **Body:**
+
 ```json
 {
   "clues": [
@@ -273,6 +280,7 @@ Import multiple clues at once.
 ```
 
 **Response:**
+
 ```json
 { "inserted": 5 }
 ```
@@ -286,6 +294,7 @@ Update an existing clue (all fields except `clueId`).
 Toggle `isActive` on/off.
 
 **Response:**
+
 ```json
 { "clue": { ...updated clue, "isActive": false } }
 ```
@@ -331,39 +340,39 @@ Templates use `{VARIABLE_NAME}` placeholders resolved at game runtime:
 
 ### Auth (`/api/auth`)
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `POST` | `/register` | — | Create account |
-| `POST` | `/login` | — | Login, returns JWT + `isAdmin` |
-| `GET` | `/me` | ✅ JWT | Get profile + `isAdmin` flag |
-| `POST` | `/logout` | ✅ JWT | Set offline |
+| Method | Path        | Auth   | Description                    |
+| ------ | ----------- | ------ | ------------------------------ |
+| `POST` | `/register` | —      | Create account                 |
+| `POST` | `/login`    | —      | Login, returns JWT + `isAdmin` |
+| `GET`  | `/me`       | ✅ JWT | Get profile + `isAdmin` flag   |
+| `POST` | `/logout`   | ✅ JWT | Set offline                    |
 
 ### Game (`/api/game`)
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/lobbies` | ✅ JWT | List open rooms |
-| `GET` | `/room/:code` | ✅ JWT | Room details (sanitised) |
-| `GET` | `/history` | ✅ JWT | My last 10 matches |
+| Method | Path          | Auth   | Description              |
+| ------ | ------------- | ------ | ------------------------ |
+| `GET`  | `/lobbies`    | ✅ JWT | List open rooms          |
+| `GET`  | `/room/:code` | ✅ JWT | Room details (sanitised) |
+| `GET`  | `/history`    | ✅ JWT | My last 10 matches       |
 
 ### Stats (`/api/stats`)
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/leaderboard` | — | Top 50 global |
-| `GET` | `/me` | ✅ JWT | My full stats |
+| Method | Path           | Auth   | Description   |
+| ------ | -------------- | ------ | ------------- |
+| `GET`  | `/leaderboard` | —      | Top 50 global |
+| `GET`  | `/me`          | ✅ JWT | My full stats |
 
 ### Clues (`/api/clues`) — Admin only
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/` | ✅ Admin | List all clues (filterable) |
-| `GET` | `/:id` | ✅ Admin | Get single clue |
-| `POST` | `/` | ✅ Admin | Create one clue |
-| `POST` | `/bulk` | ✅ Admin | Bulk import JSON array |
-| `PUT` | `/:id` | ✅ Admin | Update clue |
-| `PATCH` | `/:id/toggle` | ✅ Admin | Enable/disable |
-| `DELETE` | `/:id` | ✅ Admin | Delete permanently |
+| Method   | Path          | Auth     | Description                 |
+| -------- | ------------- | -------- | --------------------------- |
+| `GET`    | `/`           | ✅ Admin | List all clues (filterable) |
+| `GET`    | `/:id`        | ✅ Admin | Get single clue             |
+| `POST`   | `/`           | ✅ Admin | Create one clue             |
+| `POST`   | `/bulk`       | ✅ Admin | Bulk import JSON array      |
+| `PUT`    | `/:id`        | ✅ Admin | Update clue                 |
+| `PATCH`  | `/:id/toggle` | ✅ Admin | Enable/disable              |
+| `DELETE` | `/:id`        | ✅ Admin | Delete permanently          |
 
 ---
 
@@ -371,34 +380,34 @@ Templates use `{VARIABLE_NAME}` placeholders resolved at game runtime:
 
 ### Client → Server
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `createRoom` | `{ maxPlayers, minPlayers }` | Create lobby |
-| `joinRoom` | `{ roomCode, spectate? }` | Join or spectate |
-| `leaveRoom` | `{ roomCode }` | Leave room |
-| `playerReady` | `{ roomCode }` | Mark ready |
-| `startGame` | `{ roomCode }` | Host force-start |
-| `playerChooseDoor` | `{ roomCode, door }` | `'LIVE'` or `'DIE'` |
-| `chatMessage` | `{ roomCode, message }` | Lobby chat |
+| Event              | Payload                      | Description         |
+| ------------------ | ---------------------------- | ------------------- |
+| `createRoom`       | `{ maxPlayers, minPlayers }` | Create lobby        |
+| `joinRoom`         | `{ roomCode, spectate? }`    | Join or spectate    |
+| `leaveRoom`        | `{ roomCode }`               | Leave room          |
+| `playerReady`      | `{ roomCode }`               | Mark ready          |
+| `startGame`        | `{ roomCode }`               | Host force-start    |
+| `playerChooseDoor` | `{ roomCode, door }`         | `'LIVE'` or `'DIE'` |
+| `chatMessage`      | `{ roomCode, message }`      | Lobby chat          |
 
 ### Server → Client
 
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `roomCreated` | `{ roomCode, session }` | Room ready |
-| `joinedRoom` | `{ session }` | Joined successfully |
-| `playerJoined/Left` | `{ username, session }` | Roster change |
-| `hostTransferred` | `{ newHost }` | New host assigned |
-| `countdownStarted` | `{ seconds: 5 }` | Pre-game countdown |
-| `countdownTick` | `{ seconds }` | Countdown tick |
-| `gameStarted` | `{ totalRooms, session }` | Navigate to game |
-| `roomStarted` | `{ roomNumber, clueText, environment, ... }` | New room (no `correctDoor`) |
-| `doorSelectionStarted` | `{ timerSeconds }` | Choose now |
-| `choiceUpdate` | `{ chosenCount, totalAlive }` | Progress update |
-| `roundResult` | `{ correctDoor, results[], survivors[], eliminated[] }` | Reveal |
-| `playerEliminated` | `{ username }` | Elimination toast |
-| `nextRoom` | `{ nextRoomNumber, alivePlayers }` | Transition |
-| `gameEnd` | `{ winners[], allPlayers[], totalRooms }` | Game over |
+| Event                  | Payload                                                 | Description                 |
+| ---------------------- | ------------------------------------------------------- | --------------------------- |
+| `roomCreated`          | `{ roomCode, session }`                                 | Room ready                  |
+| `joinedRoom`           | `{ session }`                                           | Joined successfully         |
+| `playerJoined/Left`    | `{ username, session }`                                 | Roster change               |
+| `hostTransferred`      | `{ newHost }`                                           | New host assigned           |
+| `countdownStarted`     | `{ seconds: 5 }`                                        | Pre-game countdown          |
+| `countdownTick`        | `{ seconds }`                                           | Countdown tick              |
+| `gameStarted`          | `{ totalRooms, session }`                               | Navigate to game            |
+| `roomStarted`          | `{ roomNumber, clueText, environment, ... }`            | New room (no `correctDoor`) |
+| `doorSelectionStarted` | `{ timerSeconds }`                                      | Choose now                  |
+| `choiceUpdate`         | `{ chosenCount, totalAlive }`                           | Progress update             |
+| `roundResult`          | `{ correctDoor, results[], survivors[], eliminated[] }` | Reveal                      |
+| `playerEliminated`     | `{ username }`                                          | Elimination toast           |
+| `nextRoom`             | `{ nextRoomNumber, alivePlayers }`                      | Transition                  |
+| `gameEnd`              | `{ winners[], allPlayers[], totalRooms }`               | Game over                   |
 
 ---
 
@@ -420,30 +429,30 @@ GameSession {
 
 ### Phase Timing
 
-| Phase | Duration | Notes |
-|-------|----------|-------|
-| Countdown | 5s | Visual only |
-| Puzzle | 30s | Players read clue |
-| Door Selection | 30s | Choose LIVE or DIE |
-| Auto-select | On expiry | Random door for non-choosers |
-| Reveal delay | 1s | Anti-timing-attack |
-| Reveal display | 6s | Results shown |
-| Transition | 3s | Next room loading |
+| Phase          | Duration  | Notes                        |
+| -------------- | --------- | ---------------------------- |
+| Countdown      | 5s        | Visual only                  |
+| Puzzle         | 30s       | Players read clue            |
+| Door Selection | 30s       | Choose LIVE or DIE           |
+| Auto-select    | On expiry | Random door for non-choosers |
+| Reveal delay   | 1s        | Anti-timing-attack           |
+| Reveal display | 6s        | Results shown                |
+| Transition     | 3s        | Next room loading            |
 
 ---
 
 ## Anti-Cheat Design
 
-| Mechanism | Implementation |
-|-----------|---------------|
-| Server-side validation | `correctDoor` computed server-side, never transmitted early |
-| Seeded randomness | `clueSeed` and `resolvedVars` stay server-side |
-| Reveal delay | 1s server delay before broadcasting `roundResult` |
-| Choice deduplication | Second `playerChooseDoor` events ignored |
-| Alive check | Eliminated players' choices discarded |
-| Auto-assignment | Random door server-side when timer expires |
-| JWT on socket | All connections require valid token in handshake |
-| Admin ID verification | ADMIN_IDS checked on every admin request, not cached client-side |
+| Mechanism              | Implementation                                                   |
+| ---------------------- | ---------------------------------------------------------------- |
+| Server-side validation | `correctDoor` computed server-side, never transmitted early      |
+| Seeded randomness      | `clueSeed` and `resolvedVars` stay server-side                   |
+| Reveal delay           | 1s server delay before broadcasting `roundResult`                |
+| Choice deduplication   | Second `playerChooseDoor` events ignored                         |
+| Alive check            | Eliminated players' choices discarded                            |
+| Auto-assignment        | Random door server-side when timer expires                       |
+| JWT on socket          | All connections require valid token in handshake                 |
+| Admin ID verification  | ADMIN_IDS checked on every admin request, not cached client-side |
 
 ---
 
@@ -472,14 +481,14 @@ docker exec doa-server node utils/seedClues.js
 
 ## Scripts
 
-| Command | Where | Description |
-|---------|-------|-------------|
-| `bash setup.sh` | root | Full first-run setup |
-| `npm run dev` | `server/` | Start server with hot reload |
-| `npm start` | `server/` | Start server (production) |
-| `npm run seed` | `server/` | Seed clue database |
-| `npm run dev` | `client/` | Start Vite dev server |
-| `npm run build` | `client/` | Build for production |
+| Command         | Where     | Description                  |
+| --------------- | --------- | ---------------------------- |
+| `bash setup.sh` | root      | Full first-run setup         |
+| `npm run dev`   | `server/` | Start server with hot reload |
+| `npm start`     | `server/` | Start server (production)    |
+| `npm run seed`  | `server/` | Seed clue database           |
+| `npm run dev`   | `client/` | Start Vite dev server        |
+| `npm run build` | `client/` | Build for production         |
 
 ---
 

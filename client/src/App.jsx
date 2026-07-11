@@ -1,107 +1,86 @@
 /**
- * App.jsx — Root component with routing and auth guard
+ * App.jsx — Updated routing with hydration-safe ProtectedRoute
+ *
+ * Key change: all protected routes now go through <ProtectedRoute> which
+ * waits for _hasHydrated=true before checking tokens. Without this,
+ * every page reload logs the user out because Zustand hasn't finished
+ * reading localStorage when the first render happens.
  */
 import React, { useEffect } from 'react';
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
-import { AnimatePresence } from 'framer-motion';
-
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import useAuthStore from './store/authStore';
-import { connectSocket, disconnectSocket } from './socket/socketClient';
+import ProtectedRoute from './components/ProtectedRoute';
 
-import HomePage from './pages/HomePage';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import LobbyPage from './pages/LobbyPage';
+// Pages
+import HomePage       from './pages/HomePage';
+import LoginPage      from './pages/LoginPage';
+import RegisterPage   from './pages/RegisterPage';
+import LobbyPage      from './pages/LobbyPage';
+import GamePage       from './pages/GamePage';
 import WaitingRoomPage from './pages/WaitingRoomPage';
-import GamePage from './pages/GamePage';
 import LeaderboardPage from './pages/LeaderboardPage';
-import AdminPage from './pages/AdminPage';
-import ProfilePage from './pages/ProfilePage';
-import NotFoundPage from './pages/NotFoundPage';
+import AdminPage      from './pages/AdminPage';
+import ProfilePage    from './pages/ProfilePage';
+import NotFoundPage   from './pages/NotFoundPage';
 
-import Notification from './components/ui/Notification';
-import useGameStore from './store/gameStore';
-
-// ─── Auth Guard ───────────────────────────────────────────────────────────────
-function PrivateRoute({ children }) {
-  const token = useAuthStore((s) => s.token);
-  if (!token) return <Navigate to="/login" replace />;
-  return children;
-}
+// Notification component (if you have one)
+// import Notification from './components/ui/Notification';
 
 export default function App() {
-  const { token, fetchProfile } = useAuthStore();
-  const notification = useGameStore((s) => s.notification);
+  const { accessToken, fetchProfile, resumeSession, sessionMessage, clearSessionMessage } = useAuthStore();
 
-  // Connect socket when authenticated
+  // On mount: restart the proactive-refresh timer and sync the profile
   useEffect(() => {
-    if (token) {
-      connectSocket();
+    if (accessToken) {
+      resumeSession();
       fetchProfile();
-    } else {
-      disconnectSocket();
     }
-    return () => {};
-  }, [token]);
+  }, [accessToken]);
+
+  // Show session-expired message if forceLogout was called
+  useEffect(() => {
+    if (sessionMessage) {
+      alert(sessionMessage); // replace with your toast/notification component
+      clearSessionMessage();
+    }
+  }, [sessionMessage]);
 
   return (
-    <div className="scanlines min-h-screen bg-void-900 font-body">
-      {/* Global notification toast */}
-      <AnimatePresence>
-        {notification && <Notification notification={notification} />}
-      </AnimatePresence>
-
+    <BrowserRouter>
+      {/* <Notification /> */}
       <Routes>
-        <Route path="/" element={<HomePage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+
+        {/* ── Public routes ──────────────────────────────────────────────── */}
+        <Route path="/"            element={<HomePage />} />
+        <Route path="/login"       element={<LoginPage />} />
+        <Route path="/register"    element={<RegisterPage />} />
         <Route path="/leaderboard" element={<LeaderboardPage />} />
 
-        <Route
-          path="/lobby"
-          element={
-            <PrivateRoute>
-              <LobbyPage />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/room/:roomCode"
-          element={
-            <PrivateRoute>
-              <WaitingRoomPage />
-            </PrivateRoute>
-          }
-        />
-        <Route
-          path="/game/:roomCode"
-          element={
-            <PrivateRoute>
-              <GamePage />
-            </PrivateRoute>
-          }
-        />
+        {/* ── Protected routes — require auth, hydration-safe ────────────── */}
+        <Route path="/lobby" element={
+          <ProtectedRoute><LobbyPage /></ProtectedRoute>
+        } />
 
-        <Route
-          path="/profile"
-          element={
-            <PrivateRoute>
-              <ProfilePage />
-            </PrivateRoute>
-          }
-        />
+        <Route path="/game/:roomCode" element={
+          <ProtectedRoute><GamePage /></ProtectedRoute>
+        } />
 
-        <Route
-          path="/admin"
-          element={
-            <PrivateRoute>
-              <AdminPage />
-            </PrivateRoute>
-          }
-        />
+        <Route path="/waiting/:roomCode" element={
+          <ProtectedRoute><WaitingRoomPage /></ProtectedRoute>
+        } />
 
+        <Route path="/profile" element={
+          <ProtectedRoute><ProfilePage /></ProtectedRoute>
+        } />
+
+        <Route path="/admin" element={
+          <ProtectedRoute><AdminPage /></ProtectedRoute>
+        } />
+
+        {/* ── Fallback ───────────────────────────────────────────────────── */}
         <Route path="*" element={<NotFoundPage />} />
+
       </Routes>
-    </div>
+    </BrowserRouter>
   );
 }

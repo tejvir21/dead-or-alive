@@ -1,178 +1,165 @@
 /**
- * DoorSelectionPhase — The dramatic door choice moment
- * Players pick LIVE or DIE door
+ * DoorSelectionPhase.jsx
+ *
+ * Props:
+ *   room         — current room object (has clueText)
+ *   timerSeconds — countdown from game store
+ *   onChoose     — callback(door: 'LIVE'|'DIE') — called when player clicks
+ *   eliminated   — boolean, disable doors if already eliminated
+ *   chosenCount  — number of players who have chosen (from server via store)
+ *   totalAlive   — total alive players (from server via store)
  */
 import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import useGameStore from '../../store/gameStore';
-import useAuthStore from '../../store/authStore';
-import { emit } from '../../socket/socketClient';
+import { motion } from 'framer-motion';
 import Timer from '../ui/Timer';
 
-export default function DoorSelectionPhase({ room, roomCode }) {
-  const { timerSeconds, myChoice, setMyChoice, chosenCount, session } = useGameStore();
-  const { player } = useAuthStore();
+export default function DoorSelectionPhase({
+  room,
+  timerSeconds,
+  onChoose,
+  eliminated = false,
+  chosenCount = 0,
+  totalAlive = 1,
+}) {
+  const [chosen, setChosen] = useState(null); // local state for immediate UI feedback
+  const maxSeconds = room?.doorTimerSeconds || 30;
+  const isUrgent = timerSeconds <= 10;
 
-  const players = session?.players || [];
-  const myPlayer = players.find(p => p.username === player?.username);
-  const isEliminated = myPlayer && !myPlayer.alive;
-
-  const totalAlive = players.filter(p => p.alive).length;
-
-  const handleChoose = (door) => {
-    if (myChoice || isEliminated) return;
-    setMyChoice(door);
-    emit.chooseDoor(roomCode, door);
+  const handleDoorClick = (door) => {
+    if (chosen || eliminated) return; // already chose or eliminated
+    setChosen(door);
+    onChoose?.(door); // ← calls GamePage's handleChooseDoor → emit.chooseDoor
   };
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.4 }}
-      className="flex-1 flex flex-col items-center justify-center px-4 py-8"
-    >
-      <div className="w-full max-w-3xl space-y-8">
-        {/* Header */}
-        <div className="text-center">
-          <motion.h2
-            initial={{ y: -20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            className="font-display text-4xl md:text-5xl tracking-wider text-white mb-2"
-          >
-            CHOOSE YOUR DOOR
-          </motion.h2>
-          <p className="font-mono text-xs text-gray-600">
-            ONLY ONE DOOR LEADS TO SURVIVAL
+    <div className="flex-1 flex flex-col items-center px-4 py-6 space-y-6">
+
+      {/* Header */}
+      <p className="font-mono text-xs text-gray-600 uppercase tracking-widest">
+        Only one door leads to survival
+      </p>
+
+      {/* Clue reminder */}
+      {room?.clueText && (
+        <div className="w-full max-w-2xl glass-card p-4 border border-yellow-900/40">
+          <p className="font-mono text-[10px] text-yellow-600 uppercase tracking-widest mb-1">
+            Remember the clue:
           </p>
+          <p className="font-body text-base text-white">{room.clueText}</p>
         </div>
+      )}
 
-        {/* Clue reminder */}
-        {room && (
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}
-            className="glass-card px-6 py-4 border-l-2 border-yellow-700/50 text-center"
-          >
-            <p className="font-mono text-xs text-yellow-500/70 mb-1">REMEMBER THE CLUE:</p>
-            <p className="font-body text-white">{room.clueText}</p>
-          </motion.div>
-        )}
+      {/* Timer */}
+      <Timer
+        seconds={timerSeconds}
+        label="CHOOSE NOW"
+        max={maxSeconds}
+        critical={isUrgent}
+      />
 
-        {/* Timer */}
-        <div className="flex justify-center">
-          <Timer
-            seconds={timerSeconds}
-            label="CHOOSE NOW"
-            critical={timerSeconds <= 10}
-            max={room?.doorTimerSeconds || 30}
-          />
-        </div>
+      {/* Chosen counter */}
+      <p className={`font-mono text-xs ${chosenCount > 0 ? 'text-green-500' : 'text-gray-600'}`}>
+        {chosenCount}/{totalAlive} player{totalAlive !== 1 ? 's' : ''} have chosen
+      </p>
 
-        {/* Choice status */}
-        <div className="text-center font-mono text-xs text-gray-600">
-          {chosenCount}/{totalAlive} players have chosen
-        </div>
+      {/* Doors */}
+      <div className="grid grid-cols-2 gap-6 w-full max-w-2xl">
 
-        {/* Door buttons */}
-        {isEliminated ? (
-          <div className="text-center glass-card p-8">
-            <div className="text-4xl mb-3">💀</div>
-            <p className="font-display text-xl tracking-wider text-red-400">YOU ARE ELIMINATED</p>
-            <p className="font-mono text-xs text-gray-600 mt-2">Spectating remaining players…</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-6">
-            {/* LIVE door */}
-            <motion.button
-              whileHover={!myChoice ? { scale: 1.03 } : {}}
-              whileTap={!myChoice ? { scale: 0.97 } : {}}
-              onClick={() => handleChoose('LIVE')}
-              disabled={!!myChoice}
-              className={`door-live relative rounded-xl p-8 flex flex-col items-center justify-center
-                min-h-[220px] cursor-pointer disabled:cursor-default
-                ${myChoice === 'LIVE' ? 'selected' : ''}
-                ${myChoice && myChoice !== 'LIVE' ? 'opacity-40' : ''}`}
-            >
-              {/* Door frame decorations */}
-              <div className="absolute top-4 left-4 w-3 h-3 border-t-2 border-l-2 border-green-400/60" />
-              <div className="absolute top-4 right-4 w-3 h-3 border-t-2 border-r-2 border-green-400/60" />
-              <div className="absolute bottom-4 left-4 w-3 h-3 border-b-2 border-l-2 border-green-400/60" />
-              <div className="absolute bottom-4 right-4 w-3 h-3 border-b-2 border-r-2 border-green-400/60" />
-
-              <span className="text-5xl mb-3">🟢</span>
-              <span className="font-display text-5xl tracking-[0.2em] text-green-300">LIVE</span>
-              <span className="font-mono text-xs text-green-600/70 mt-2 uppercase tracking-wider">
-                Survival Door
-              </span>
-
-              {myChoice === 'LIVE' && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="absolute top-3 right-3 w-6 h-6 rounded-full bg-green-500 flex items-center justify-center text-white text-xs font-bold"
-                >
-                  ✓
-                </motion.div>
-              )}
-            </motion.button>
-
-            {/* DIE door */}
-            <motion.button
-              whileHover={!myChoice ? { scale: 1.03 } : {}}
-              whileTap={!myChoice ? { scale: 0.97 } : {}}
-              onClick={() => handleChoose('DIE')}
-              disabled={!!myChoice}
-              className={`door-die relative rounded-xl p-8 flex flex-col items-center justify-center
-                min-h-[220px] cursor-pointer disabled:cursor-default
-                ${myChoice === 'DIE' ? 'selected' : ''}
-                ${myChoice && myChoice !== 'DIE' ? 'opacity-40' : ''}`}
-            >
-              <div className="absolute top-4 left-4 w-3 h-3 border-t-2 border-l-2 border-red-400/60" />
-              <div className="absolute top-4 right-4 w-3 h-3 border-t-2 border-r-2 border-red-400/60" />
-              <div className="absolute bottom-4 left-4 w-3 h-3 border-b-2 border-l-2 border-red-400/60" />
-              <div className="absolute bottom-4 right-4 w-3 h-3 border-b-2 border-r-2 border-red-400/60" />
-
-              <span className="text-5xl mb-3">🔴</span>
-              <span className="font-display text-5xl tracking-[0.2em] text-red-300">DIE</span>
-              <span className="font-mono text-xs text-red-600/70 mt-2 uppercase tracking-wider">
-                Fatal Door
-              </span>
-
-              {myChoice === 'DIE' && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="absolute top-3 right-3 w-6 h-6 rounded-full bg-red-500 flex items-center justify-center text-white text-xs font-bold"
-                >
-                  ✓
-                </motion.div>
-              )}
-            </motion.button>
-          </div>
-        )}
-
-        {/* Chosen confirmation */}
-        <AnimatePresence>
-          {myChoice && !isEliminated && (
-            <motion.div
-              initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
-              className={`text-center glass-card px-6 py-4 border ${
-                myChoice === 'LIVE' ? 'border-green-700/50' : 'border-red-700/50'
-              }`}
-            >
-              <p className={`font-display text-lg tracking-wider ${
-                myChoice === 'LIVE' ? 'text-green-400' : 'text-red-400'
-              }`}>
-                YOU CHOSE: {myChoice}
-              </p>
-              <p className="font-mono text-xs text-gray-600 mt-1">
-                Waiting for other players… Results will be revealed shortly.
-              </p>
-            </motion.div>
+        {/* LIVE door */}
+        <motion.button
+          onClick={() => handleDoorClick('LIVE')}
+          disabled={!!chosen || eliminated}
+          whileHover={!chosen && !eliminated ? { scale: 1.03 } : {}}
+          whileTap={!chosen && !eliminated ? { scale: 0.97 } : {}}
+          className={`relative rounded-xl border-2 p-8 flex flex-col items-center gap-4 transition-all duration-200 cursor-pointer disabled:cursor-default
+            ${chosen === 'LIVE'
+              ? 'bg-green-900/50 border-green-400 shadow-[0_0_30px_rgba(74,222,128,0.3)]'
+              : chosen === 'DIE'
+                ? 'bg-green-950/20 border-green-900/30 opacity-50'
+                : 'bg-green-950/30 border-green-700 hover:bg-green-900/40 hover:border-green-500'
+            }`}
+        >
+          {/* Chosen checkmark */}
+          {chosen === 'LIVE' && (
+            <span className="absolute top-3 right-3 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center text-white text-xs">
+              ✓
+            </span>
           )}
-        </AnimatePresence>
+
+          {/* Corner brackets */}
+          <div className="absolute top-2 left-2 w-4 h-4 border-t-2 border-l-2 border-green-500/60" />
+          <div className="absolute top-2 right-2 w-4 h-4 border-t-2 border-r-2 border-green-500/60" />
+          <div className="absolute bottom-2 left-2 w-4 h-4 border-b-2 border-l-2 border-green-500/60" />
+          <div className="absolute bottom-2 right-2 w-4 h-4 border-b-2 border-r-2 border-green-500/60" />
+
+          <div className={`w-16 h-16 rounded-full ${chosen === 'LIVE' ? 'bg-green-400' : 'bg-green-600'}`} />
+          <div className="text-center">
+            <p className={`font-display text-4xl font-black tracking-widest ${chosen === 'LIVE' ? 'text-green-300' : 'text-green-500'}`}>
+              LIVE
+            </p>
+            <p className="font-mono text-[10px] text-green-800 uppercase tracking-widest mt-1">
+              Survival Door
+            </p>
+          </div>
+        </motion.button>
+
+        {/* DIE door */}
+        <motion.button
+          onClick={() => handleDoorClick('DIE')}
+          disabled={!!chosen || eliminated}
+          whileHover={!chosen && !eliminated ? { scale: 1.03 } : {}}
+          whileTap={!chosen && !eliminated ? { scale: 0.97 } : {}}
+          className={`relative rounded-xl border-2 p-8 flex flex-col items-center gap-4 transition-all duration-200 cursor-pointer disabled:cursor-default
+            ${chosen === 'DIE'
+              ? 'bg-red-900/50 border-red-400 shadow-[0_0_30px_rgba(248,113,113,0.3)]'
+              : chosen === 'LIVE'
+                ? 'bg-red-950/20 border-red-900/30 opacity-50'
+                : 'bg-red-950/30 border-red-800 hover:bg-red-900/40 hover:border-red-600'
+            }`}
+        >
+          {/* Chosen checkmark */}
+          {chosen === 'DIE' && (
+            <span className="absolute top-3 right-3 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center text-white text-xs">
+              ✓
+            </span>
+          )}
+
+          <div className="absolute top-2 left-2 w-4 h-4 border-t-2 border-l-2 border-red-600/60" />
+          <div className="absolute top-2 right-2 w-4 h-4 border-t-2 border-r-2 border-red-600/60" />
+          <div className="absolute bottom-2 left-2 w-4 h-4 border-b-2 border-l-2 border-red-600/60" />
+          <div className="absolute bottom-2 right-2 w-4 h-4 border-b-2 border-r-2 border-red-600/60" />
+
+          <div className={`w-16 h-16 rounded-full ${chosen === 'DIE' ? 'bg-red-400' : 'bg-red-700'}`} />
+          <div className="text-center">
+            <p className={`font-display text-4xl font-black tracking-widest ${chosen === 'DIE' ? 'text-red-300' : 'text-red-500'}`}>
+              DIE
+            </p>
+            <p className="font-mono text-[10px] text-red-900 uppercase tracking-widest mt-1">
+              Fatal Door
+            </p>
+          </div>
+        </motion.button>
+
       </div>
-    </motion.div>
+
+      {/* Eliminated message */}
+      {eliminated && (
+        <p className="font-mono text-sm text-red-500 animate-pulse">
+          💀 You have been eliminated — spectating
+        </p>
+      )}
+
+      {/* Waiting message after choice */}
+      {chosen && !eliminated && (
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="font-mono text-xs text-gray-500"
+        >
+          Waiting for other players or timer…
+        </motion.p>
+      )}
+
+    </div>
   );
 }

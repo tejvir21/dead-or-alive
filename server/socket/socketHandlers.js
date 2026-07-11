@@ -1,65 +1,71 @@
 /**
- * Socket.io Game Engine
- * Handles all real-time multiplayer events for Dead or Alive: Logic Escape
+ * socketHandlers.js — Phase 1 Fixed
  *
- * Event flow:
- * createRoom → joinRoom → playerReady → startGame → [room loop] → gameEnd
+ * Root cause of "chose correct door but got eliminated":
+ *
+ *   playerChooseDoor looked up the player ONLY by socket.id.
+ *   If the socket.id changed between session registration and the door click
+ *   (due to an unnecessary joinRoom re-emit from GamePage), the lookup
+ *   returned null and the choice was silently dropped. Timer expired,
+ *   server auto-assigned a random door, wrong door = eliminated.
+ *
+ * Fixes:
+ *   1. playerChooseDoor: falls back to playerId lookup if socket.id misses,
+ *      then corrects the session.players map entry in-place.
+ *   2. joinRoom: active players (already in session.players) are NEVER
+ *      demoted to spectator, even if the game is in_progress.
+ *   3. beginGame: emits gameStarted AFTER rooms are generated so the
+ *      client has totalRooms immediately.
  */
-
+require('dotenv').config();
 const jwt = require('jsonwebtoken');
 const Player = require('../models/Player');
 const Match = require('../models/Match');
-const Clue = require('../models/Clue');
+const GameSettings = require('../models/GameSettings');
 const { generateRoomSequence, validateDoorChoice } = require('../utils/roomGenerator');
 const { v4: uuidv4 } = require('uuid');
+const logger = require('../utils/logger');
 
-// ─── In-memory game state (fast access, synced to DB periodically) ─────────────
-// Key: roomCode, Value: GameSession
 const activeSessions = new Map();
+const reconnectTimers = new Map();
 
-/**
- * GameSession - full in-memory state for one match
- */
 class GameSession {
-  constructor(matchId, roomCode, createdBy, maxPlayers, minPlayers) {
+  constructor(matchId, roomCode, createdBy, maxPlayers, minPlayers, difficultyCurve) {
     this.matchId = matchId;
     this.roomCode = roomCode;
     this.createdBy = createdBy;
     this.maxPlayers = maxPlayers;
     this.minPlayers = minPlayers;
-    this.status = 'waiting'; // waiting | countdown | in_progress | completed
-    this.players = new Map(); // socketId → PlayerState
-    this.spectators = new Set(); // socketIds
-    this.rooms = []; // generated room configs (with correctDoor)
+    this.difficultyCurve = difficultyCurve || 'stepped';
+    this.status = 'waiting';
+    this.players = new Map();
+    this.spectators = new Set();
+    this.rooms = [];
     this.currentRoomIndex = 0;
-    this.roundPhase = 'idle'; // idle | puzzle | door_selection | reveal | transition
+    this.roundPhase = 'idle';
     this.roundTimer = null;
     this.revealTimer = null;
-    this.choices = new Map(); // socketId → 'LIVE'|'DIE'
-    this.startCountdown = null;
+    this.choices = new Map();
+    this.puzzleStartTime = null;
+    this.doorStartTime = null;
   }
 
-  getAlivePlayers() {
-    return [...this.players.values()].filter((p) => p.alive);
+  getAlivePlayers()  { return [...this.players.values()].filter(p => p.alive); }
+  getAllPlayers()     { return [...this.players.values()]; }
+  getCurrentRoom()   { return this.rooms[this.currentRoomIndex] || null; }
+
+  // Find a player by playerId regardless of current socketId
+  findPlayerByPlayerId(playerId) {
+    return [...this.players.values()].find(p => p.playerId === playerId) || null;
   }
 
-  getAllPlayers() {
-    return [...this.players.values()];
-  }
-
-  getCurrentRoom() {
-    return this.rooms[this.currentRoomIndex] || null;
-  }
-
-  // Safe room data (no correctDoor) for clients
   getSafeCurrentRoom() {
-    const room = this.getCurrentRoom();
-    if (!room) return null;
-    const { correctDoor, answerRule, resolvedVars, clueSeed, ...safe } = room;
+    const r = this.getCurrentRoom();
+    if (!r) return null;
+    const { correctDoor, answerRule, resolvedVars, clueSeed, ...safe } = r;
     return safe;
   }
 
-  // Serialize for client state sync
   toPublicState() {
     return {
       roomCode: this.roomCode,
@@ -70,570 +76,367 @@ class GameSession {
       minPlayers: this.minPlayers,
       maxPlayers: this.maxPlayers,
       createdBy: this.createdBy,
-      players: this.getAllPlayers().map((p) => ({
+      difficultyCurve: this.difficultyCurve,
+      players: this.getAllPlayers().map(p => ({
         id: p.playerId,
         username: p.username,
         alive: p.alive,
         ready: p.ready,
         roomsSurvived: p.roomsSurvived,
         hasChosen: this.choices.has(p.socketId),
+        isVerified: p.isVerified,
+        skippedToDoor: p.skippedToDoor,
       })),
       currentRoom: this.getSafeCurrentRoom(),
     };
   }
 }
 
-/**
- * PlayerState - one player in a session
- */
 class PlayerState {
-  constructor(socketId, playerId, username) {
+  constructor(socketId, playerId, username, isVerified) {
     this.socketId = socketId;
     this.playerId = playerId;
     this.username = username;
+    this.isVerified = !!isVerified;
     this.alive = true;
     this.ready = false;
     this.roomsSurvived = 0;
+    this.skippedToDoor = false;
     this.joinedAt = Date.now();
   }
 }
 
-// ─── Socket Authentication Middleware ─────────────────────────────────────────
 async function authenticateSocket(socket, next) {
   try {
-    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization;
+    const token = (socket.handshake.auth?.token || socket.handshake.headers?.authorization || '')
+      .replace('Bearer ', '');
     if (!token) return next(new Error('Authentication required'));
-
-    const decoded = jwt.verify(token.replace('Bearer ', ''), process.env.JWT_SECRET);
-    const player = await Player.findById(decoded.id).select('-password');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const player = await Player.findById(decoded.id).select('-password -otp');
     if (!player) return next(new Error('Player not found'));
-
+    if (player.isBanned && (!player.banUntil || player.banUntil > new Date()))
+      return next(new Error('Account banned'));
     socket.player = player;
     next();
   } catch (err) {
+    if (err.name === 'TokenExpiredError') return next(new Error('Token expired'));
     next(new Error('Invalid token'));
   }
 }
 
-// ─── Main Socket Handler ──────────────────────────────────────────────────────
+async function calcTimerReduction(session, correctPickers, totalAlive) {
+  const settings = await GameSettings.getSingleton();
+  if (!settings.timerReductionEnabled) return 0;
+  const baseFactor = settings.timerReductionFactor || 0.3;
+  const doorTimer  = settings.doorTimerSeconds || 30;
+  const elapsed    = (Date.now() - (session.doorStartTime || Date.now())) / 1000;
+  const remaining  = Math.max(0, doorTimer - elapsed);
+  const speedFactor   = Math.max(0, (doorTimer - elapsed) / doorTimer);
+  const percentFactor = totalAlive > 0 ? correctPickers / totalAlive : 0;
+  return Math.round(remaining * percentFactor * speedFactor * baseFactor);
+}
+
 function initSocketHandlers(io) {
-  // Auth middleware for all socket connections
   io.use(authenticateSocket);
 
-  io.on('connection', (socket) => {
-    console.log(`🔌 Player connected: ${socket.player.username} (${socket.id})`);
-
-    // Update online status
+  io.on('connection', socket => {
+    // socket.id is reliably available after next tick in some versions
+    setTimeout(() => logger.info(`🔌 Connected: ${socket.player.username} (${socket.id})`), 0);
     Player.findByIdAndUpdate(socket.player._id, { isOnline: true, lastSeen: new Date() }).exec();
 
-    // ── createRoom ──────────────────────────────────────────────────────────
-    socket.on('createRoom', async ({ maxPlayers = 8, minPlayers = 2 }) => {
+    // ── createRoom ────────────────────────────────────────────────────────────
+    socket.on('createRoom', async ({ maxPlayers = 8, minPlayers = 1, difficultyCurve, isPasswordProtected } = {}) => {
       try {
-        const roomCode = Math.random().toString(36).substring(2, 8).toUpperCase();
-        const matchId = uuidv4();
+        const settings = await GameSettings.getSingleton();
+        if (settings.features.maintenanceMode)
+          return socket.emit('error', { message: 'Server is under maintenance.' });
 
-        // Allow min 1 so hosts can test solo; clamp max to 8
-        const safeMax = Math.min(8, Math.max(1, maxPlayers));
-        const safeMin = Math.min(safeMax, Math.max(1, minPlayers));
+        const playerMaxAllowed = socket.player.maxPlayers(settings);
+        const safeMax = Math.min(playerMaxAllowed, Math.max(1, parseInt(maxPlayers) || 8));
+        const safeMin = Math.min(safeMax, Math.max(1, parseInt(minPlayers) || 1));
 
-        // Persist to DB
-        const match = await Match.create({
-          matchId,
-          roomCode,
-          maxPlayers: safeMax,
-          minPlayers: safeMin,
+        const roomCode = uuidv4().substring(0, 6).toUpperCase();
+        const matchId  = uuidv4();
+
+        await Match.create({
+          matchId, roomCode,
+          maxPlayers: safeMax, minPlayers: safeMin,
           createdBy: socket.player._id,
           players: [{ playerId: socket.player._id, username: socket.player.username, joinedAt: new Date() }],
           status: 'waiting',
+          difficultyCurve: difficultyCurve || 'stepped',
+          isPasswordProtected: !!isPasswordProtected,
         });
 
-        // Create in-memory session
-        const session = new GameSession(matchId, roomCode, socket.player._id.toString(), safeMax, safeMin);
-        const ps = new PlayerState(socket.id, socket.player._id.toString(), socket.player.username);
-        ps.ready = false;
+        const session = new GameSession(matchId, roomCode, socket.player._id.toString(), safeMax, safeMin, difficultyCurve);
+        const ps = new PlayerState(socket.id, socket.player._id.toString(), socket.player.username, socket.player.isVerified);
         session.players.set(socket.id, ps);
         activeSessions.set(roomCode, session);
 
         socket.join(roomCode);
         socket.emit('roomCreated', { roomCode, session: session.toPublicState() });
-        console.log(`🏠 Room created: ${roomCode} by ${socket.player.username}`);
       } catch (err) {
-        socket.emit('error', { message: 'Failed to create room: ' + err.message });
+        logger.error('createRoom error:', err);
+        socket.emit('error', { message: 'Failed to create room' });
       }
     });
 
-    // ── joinRoom ────────────────────────────────────────────────────────────
-    socket.on('joinRoom', async ({ roomCode, spectate = false }) => {
+    // ── joinRoom ──────────────────────────────────────────────────────────────
+    socket.on('joinRoom', async ({ roomCode, spectate = false } = {}) => {
       try {
-        const code = roomCode.toUpperCase();
+        const code = (roomCode || '').toUpperCase();
         const session = activeSessions.get(code);
-
         if (!session) return socket.emit('error', { message: 'Room not found' });
-        if (session.status !== 'waiting' && !spectate) {
-          // Allow joining as spectator if game is in progress
-          return socket.emit('error', { message: 'Game already in progress. Join as spectator?' });
-        }
-        if (!spectate && session.players.size >= session.maxPlayers) {
-          return socket.emit('error', { message: 'Room is full' });
-        }
 
-        // Check if player already in room (reconnection)
-        const existingEntry = [...session.players.values()].find(
-          (p) => p.playerId === socket.player._id.toString()
-        );
+        // ── FIX: Reconnection check BEFORE spectator check ────────────────────
+        // Active players must NEVER be demoted to spectators, even during
+        // in_progress games. Check by playerId (not socket.id) so it survives
+        // socket reconnects and client-side navigation.
+        const existing = session.findPlayerByPlayerId(socket.player._id.toString());
+        if (existing) {
+          const timerKey = `${code}:${socket.player._id}`;
+          const reconnTimer = reconnectTimers.get(timerKey);
+          if (reconnTimer) {
+            clearTimeout(reconnTimer);
+            reconnectTimers.delete(timerKey);
+          }
 
-        if (existingEntry && !spectate) {
-          // Reconnection: update socket ID
-          session.players.delete(existingEntry.socketId);
-          existingEntry.socketId = socket.id;
-          session.players.set(socket.id, existingEntry);
+          // Reattach socket — update the map key to the current socket.id
+          if (existing.socketId !== socket.id) {
+            session.players.delete(existing.socketId);
+            existing.socketId = socket.id;
+            session.players.set(socket.id, existing);
+          }
+
           socket.join(code);
           socket.emit('reconnected', { session: session.toPublicState() });
-          io.to(code).emit('playerReconnected', { username: socket.player.username });
+          io.to(code).emit('playerReconnected', { username: socket.player.username, session: session.toPublicState() });
+
+          // Resend current state if game is in progress
+          if (session.status === 'in_progress') {
+            const room = session.getSafeCurrentRoom();
+            if (room && session.roundPhase === 'puzzle') {
+              socket.emit('roomStarted', { ...room, totalRooms: session.rooms.length });
+            } else if (session.roundPhase === 'door_selection') {
+              const settings = await GameSettings.getSingleton();
+              socket.emit('doorSelectionStarted', { timerSeconds: settings.doorTimerSeconds || 30 });
+            }
+          }
           return;
         }
 
-        socket.join(code);
-
-        if (spectate) {
+        // ── Spectator (game already started, not an active player) ────────────
+        if (spectate || session.status === 'in_progress') {
+          socket.join(code);
           session.spectators.add(socket.id);
           socket.emit('joinedAsSpectator', { session: session.toPublicState() });
           io.to(code).emit('spectatorJoined', { username: socket.player.username });
           return;
         }
 
-        const ps = new PlayerState(socket.id, socket.player._id.toString(), socket.player.username);
+        // ── Normal join ───────────────────────────────────────────────────────
+        if (session.status !== 'waiting')
+          return socket.emit('error', { message: 'Game already started.' });
+        if (session.players.size >= session.maxPlayers)
+          return socket.emit('error', { message: 'Room is full' });
+
+        const ps = new PlayerState(socket.id, socket.player._id.toString(), socket.player.username, socket.player.isVerified);
         session.players.set(socket.id, ps);
 
-        // Update DB
         await Match.findOneAndUpdate(
           { matchId: session.matchId },
           { $push: { players: { playerId: socket.player._id, username: socket.player.username, joinedAt: new Date() } } }
         );
 
+        socket.join(code);
         socket.emit('joinedRoom', { session: session.toPublicState() });
-        io.to(code).emit('playerJoined', {
-          username: socket.player.username,
-          session: session.toPublicState(),
-        });
-
-        console.log(`👤 ${socket.player.username} joined room ${code}`);
+        io.to(code).emit('playerJoined', { username: socket.player.username, session: session.toPublicState() });
       } catch (err) {
+        logger.error('joinRoom error:', err);
         socket.emit('error', { message: 'Failed to join room' });
       }
     });
 
-    // ── leaveRoom ───────────────────────────────────────────────────────────
-    socket.on('leaveRoom', ({ roomCode }) => {
-      handlePlayerLeave(socket, roomCode, io);
+    // ── leaveRoom ─────────────────────────────────────────────────────────────
+    socket.on('leaveRoom', ({ roomCode } = {}) => {
+      handleLeave(socket, (roomCode || '').toUpperCase(), io, false);
     });
 
-    // ── playerReady ─────────────────────────────────────────────────────────
-    socket.on('playerReady', ({ roomCode }) => {
-      const session = activeSessions.get(roomCode?.toUpperCase());
+    // ── playerReady ───────────────────────────────────────────────────────────
+    socket.on('playerReady', ({ roomCode } = {}) => {
+      const code = (roomCode || '').toUpperCase();
+      const session = activeSessions.get(code);
       if (!session) return;
-
       const player = session.players.get(socket.id);
       if (!player) return;
-
       player.ready = true;
-
-      io.to(roomCode.toUpperCase()).emit('playerReadyUpdate', {
-        username: player.username,
-        session: session.toPublicState(),
-      });
-
-      // Auto-start if all players ready and minimum reached
-      const allReady = session.getAlivePlayers().every((p) => p.ready);
-      const enoughPlayers = session.players.size >= session.minPlayers;
-
-      if (allReady && enoughPlayers && session.status === 'waiting') {
-        startCountdown(roomCode.toUpperCase(), io, session);
+      io.to(code).emit('playerReadyUpdate', { username: player.username, session: session.toPublicState() });
+      const allReady = session.getAlivePlayers().every(p => p.ready);
+      if (allReady && session.players.size >= session.minPlayers && session.status === 'waiting') {
+        startCountdown(code, io, session);
       }
     });
 
-    // ── startGame (host override) ────────────────────────────────────────────
-    socket.on('startGame', async ({ roomCode }) => {
-      const code = roomCode.toUpperCase();
+    // ── startGame ─────────────────────────────────────────────────────────────
+    socket.on('startGame', ({ roomCode } = {}) => {
+      const code = (roomCode || '').toUpperCase();
       const session = activeSessions.get(code);
       if (!session) return socket.emit('error', { message: 'Room not found' });
-      if (session.createdBy !== socket.player._id.toString()) {
-        return socket.emit('error', { message: 'Only the host can start the game' });
-      }
-      if (session.status === 'countdown' || session.status === 'in_progress') {
-        return; // already starting, ignore duplicate clicks
-      }
+      if (session.createdBy !== socket.player._id.toString())
+        return socket.emit('error', { message: 'Only the host can start' });
       if (session.status !== 'waiting') return;
-
-      const playerCount = session.players.size;
-      if (playerCount < session.minPlayers) {
-        return socket.emit('error', {
-          message: `Need at least ${session.minPlayers} player(s) to start. Currently ${playerCount}.`,
-        });
-      }
-
+      if (session.players.size < session.minPlayers)
+        return socket.emit('error', { message: `Need at least ${session.minPlayers} player(s)` });
       startCountdown(code, io, session);
     });
 
-    // ── playerChooseDoor ─────────────────────────────────────────────────────
-    socket.on('playerChooseDoor', ({ roomCode, door }) => {
-      const code = roomCode.toUpperCase();
+    // ── playerSkipToDoor ──────────────────────────────────────────────────────
+    socket.on('playerSkipToDoor', ({ roomCode } = {}) => {
+      const code = (roomCode || '').toUpperCase();
       const session = activeSessions.get(code);
-      if (!session) return;
-      if (session.roundPhase !== 'door_selection') {
-        return socket.emit('error', { message: 'Not in door selection phase' });
+      if (!session || session.roundPhase !== 'puzzle') return;
+      const player = session.players.get(socket.id)
+        || session.findPlayerByPlayerId(socket.player._id.toString());
+      if (!player || !player.alive || player.skippedToDoor) return;
+      player.skippedToDoor = true;
+      io.to(code).emit('playerSkippedToDoor', {
+        username: player.username,
+        skippedCount: session.getAlivePlayers().filter(p => p.skippedToDoor).length,
+        totalAlive: session.getAlivePlayers().length,
+      });
+      const allSkipped = session.getAlivePlayers().every(p => p.skippedToDoor);
+      if (allSkipped) {
+        clearTimeout(session.roundTimer);
+        startDoorSelection(code, io, session);
+      }
+    });
+
+    // ── playerChooseDoor ──────────────────────────────────────────────────────
+    socket.on('playerChooseDoor', async ({ roomCode, door } = {}) => {
+      const code = (roomCode || '').toUpperCase();
+      const session = activeSessions.get(code);
+      if (!session || session.roundPhase !== 'door_selection') return;
+      if (!['LIVE', 'DIE'].includes(door)) return;
+
+      // ── FIX: look up by socket.id first, fall back to playerId ───────────
+      // This prevents silent drops when socket.id changed between registration
+      // and the door click (e.g. due to an unnecessary joinRoom re-emit).
+      let player = session.players.get(socket.id);
+      if (!player) {
+        // Fallback: find by playerId and correct the map entry
+        const byId = session.findPlayerByPlayerId(socket.player._id.toString());
+        if (byId) {
+          logger.warn(`[choiceDoor] socket.id mismatch for ${socket.player.username} — correcting entry`);
+          session.players.delete(byId.socketId);
+          byId.socketId = socket.id;
+          session.players.set(socket.id, byId);
+          player = byId;
+        }
       }
 
-      const player = session.players.get(socket.id);
       if (!player || !player.alive) return;
-      if (!['LIVE', 'DIE'].includes(door)) return;
-      if (session.choices.has(socket.id)) return; // Already chose
+      // Don't allow choosing twice
+      if (session.choices.has(socket.id)) return;
 
-      // Record choice with timestamp for anti-cheat
-      session.choices.set(socket.id, { door, chosenAt: Date.now() });
+      const chosenAt = Date.now();
+      session.choices.set(socket.id, { door, chosenAt });
 
-      // Tell everyone how many have chosen (not WHO chose what until reveal)
-      const chosenCount = [...session.choices.keys()].filter(
-        (sid) => session.players.get(sid)?.alive
-      ).length;
-      const totalAlive = session.getAlivePlayers().length;
+      const alivePlayers = session.getAlivePlayers();
+      const chosenCount  = alivePlayers.filter(p => session.choices.has(p.socketId)).length;
 
       io.to(code).emit('choiceUpdate', {
         chosenCount,
-        totalAlive,
-        username: player.username, // just show they chose, not what
+        totalAlive: alivePlayers.length,
+        username: player.username,
       });
 
-      // If everyone chose, reveal early
-      if (chosenCount >= totalAlive) {
+      // Timer reduction on correct early pick
+      const room = session.getCurrentRoom();
+      if (room && door === room.correctDoor) {
+        const correctPickers = [...session.choices.entries()]
+          .filter(([sid, c]) => { const p = session.players.get(sid); return p?.alive && c.door === room.correctDoor; })
+          .length;
+        const reduction = await calcTimerReduction(session, correctPickers, alivePlayers.length);
+        if (reduction > 0) io.to(code).emit('timerReduced', { reduction, by: player.username });
+      }
+
+      // All chose → reveal immediately
+      if (chosenCount >= alivePlayers.length) {
         clearTimeout(session.roundTimer);
         revealResults(code, io, session);
       }
     });
 
-    // ── chatMessage (lobby chat) ─────────────────────────────────────────────
-    socket.on('chatMessage', ({ roomCode, message }) => {
+    // ── chatMessage ───────────────────────────────────────────────────────────
+    socket.on('chatMessage', ({ roomCode, message } = {}) => {
       if (!message || message.length > 200) return;
-      const session = activeSessions.get(roomCode?.toUpperCase());
+      const code = (roomCode || '').toUpperCase();
+      const session = activeSessions.get(code);
       if (!session) return;
       const player = session.players.get(socket.id);
       if (!player) return;
-
-      io.to(roomCode.toUpperCase()).emit('chatMessage', {
+      io.to(code).emit('chatMessage', {
         username: player.username,
         message: message.trim(),
         timestamp: Date.now(),
+        isVerified: player.isVerified,
       });
     });
 
-    // ── disconnect ───────────────────────────────────────────────────────────
-    socket.on('disconnect', (reason) => {
-      console.log(`🔌 Disconnected: ${socket.player?.username} (${reason})`);
+    // ── disconnect ────────────────────────────────────────────────────────────
+    socket.on('disconnect', reason => {
+      setTimeout(() => logger.info(`🔌 Disconnected: ${socket.player?.username} (${reason})`), 0);
       Player.findByIdAndUpdate(socket.player?._id, { isOnline: false, lastSeen: new Date() }).exec();
 
-      // Find which room this socket was in and handle leave
       for (const [code, session] of activeSessions) {
-        if (session.players.has(socket.id) || session.spectators.has(socket.id)) {
-          handlePlayerLeave(socket, code, io);
-          break;
-        }
+        const player = session.players.get(socket.id);
+        if (player) { handleDisconnect(socket, code, session, player, io); break; }
+        if (session.spectators.has(socket.id)) { session.spectators.delete(socket.id); break; }
       }
     });
   });
 }
 
-// ─── Game Flow Functions ──────────────────────────────────────────────────────
+function handleDisconnect(socket, code, session, player, io) {
+  if (session.status === 'waiting') { handleLeave(socket, code, io, true); return; }
 
-/**
- * Starts the pre-game countdown (5 seconds)
- */
-function startCountdown(roomCode, io, session) {
-  if (session.status !== 'waiting') return;
-  session.status = 'countdown';
+  const graceSeconds = player.isVerified
+    ? parseInt(process.env.RECONNECT_GRACE_SECONDS_VERIFIED || 60)
+    : parseInt(process.env.RECONNECT_GRACE_SECONDS_NORMAL   || 30);
 
-  io.to(roomCode).emit('countdownStarted', { seconds: 5 });
-
-  let count = 5;
-  const interval = setInterval(() => {
-    count--;
-    io.to(roomCode).emit('countdownTick', { seconds: count });
-
-    if (count <= 0) {
-      clearInterval(interval);
-      // Small delay so clients see "GO!" before navigation
-      setTimeout(() => beginGame(roomCode, io, session), 800);
-    }
-  }, 1000);
-}
-
-/**
- * Generates rooms and begins the game
- */
-async function beginGame(roomCode, io, session) {
-  try {
-    session.status = 'in_progress';
-
-    // Emit gameStarted FIRST so all clients navigate to game page immediately
-    io.to(roomCode).emit('gameStarted', {
-      totalRooms: 0, // will be updated once rooms are generated
-      session: session.toPublicState(),
-    });
-
-    // Collect all player recent clue IDs for anti-repetition
-    const playerIds = [...session.players.values()].map((p) => p.playerId);
-    const players = await Player.find({ _id: { $in: playerIds } });
-    const excludeClueIds = players.flatMap((p) => p.getRecentClueIds());
-
-    // Generate room sequence
-    session.rooms = await generateRoomSequence(session.players.size, excludeClueIds);
-
-    await Match.findOneAndUpdate(
-      { matchId: session.matchId },
-      { status: 'in_progress', startedAt: new Date(), totalRooms: session.rooms.length }
-    );
-
-    // Start first room after clients have had time to navigate (2s)
-    setTimeout(() => startRoom(roomCode, io, session), 2000);
-  } catch (err) {
-    console.error('beginGame error:', err);
-    io.to(roomCode).emit('error', { message: 'Failed to start game: ' + err.message });
-    session.status = 'waiting'; // roll back so host can retry
-  }
-}
-
-/**
- * Presents a room's puzzle to players
- */
-function startRoom(roomCode, io, session) {
-  session.choices.clear();
-  session.roundPhase = 'puzzle';
-
-  const room = session.getCurrentRoom();
-  if (!room) return endGame(roomCode, io, session);
-
-  io.to(roomCode).emit('roomStarted', {
-    roomNumber: room.roomNumber,
-    environment: room.environment,
-    clueCategory: room.clueCategory,
-    clueText: room.clueText,
-    flavorText: room.flavorText,
-    ambientObjects: room.ambientObjects,
-    timerSeconds: room.timerSeconds,
-    totalRooms: session.rooms.length,
-    session: session.toPublicState(),
+  io.to(code).emit('playerDisconnected', {
+    username: player.username, graceSeconds,
+    message: `${player.username} disconnected. ${graceSeconds}s to reconnect.`,
   });
 
-  // After puzzle phase, move to door selection
-  // Use the room's configured timer (default 30s)
-  const puzzleMs = (room.timerSeconds || 30) * 1000;
-  session.roundTimer = setTimeout(() => {
-    startDoorSelection(roomCode, io, session);
-  }, puzzleMs);
-}
-
-/**
- * Players now choose a door (30 seconds)
- */
-function startDoorSelection(roomCode, io, session) {
-  clearTimeout(session.roundTimer);
-  session.roundPhase = 'door_selection';
-
-  const room = session.getCurrentRoom();
-  const doorTimer = (room?.doorTimerSeconds || 30);
-
-  io.to(roomCode).emit('doorSelectionStarted', {
-    timerSeconds: doorTimer,
-    session: session.toPublicState(),
-  });
-
-  // Auto-reveal when timer expires
-  session.roundTimer = setTimeout(() => {
-    // Assign random doors to players who didn't choose
-    for (const player of session.getAlivePlayers()) {
-      if (!session.choices.has(player.socketId)) {
+  const timerKey = `${code}:${player.playerId}`;
+  const t = setTimeout(() => {
+    const stillDisconnected = !io.sockets.sockets.get(socket.id);
+    if (stillDisconnected && session.players.has(socket.id)) {
+      if (session.roundPhase === 'door_selection' && !session.choices.has(socket.id)) {
         const randomDoor = Math.random() > 0.5 ? 'LIVE' : 'DIE';
-        session.choices.set(player.socketId, { door: randomDoor, chosenAt: Date.now(), auto: true });
+        session.choices.set(socket.id, { door: randomDoor, chosenAt: Date.now(), auto: true });
       }
-    }
-    revealResults(roomCode, io, session);
-  }, doorTimer * 1000);
-}
-
-/**
- * Reveals results, eliminates players, prepares next room
- */
-async function revealResults(roomCode, io, session) {
-  clearTimeout(session.roundTimer);
-  session.roundPhase = 'reveal';
-
-  const room = session.getCurrentRoom();
-  const correctDoor = room.correctDoor;
-
-  const results = [];
-  const survivors = [];
-  const eliminated = [];
-
-  for (const [socketId, choiceData] of session.choices) {
-    const player = session.players.get(socketId);
-    if (!player || !player.alive) continue;
-
-    const survived = validateDoorChoice(room, choiceData.door);
-
-    results.push({
-      username: player.username,
-      chosenDoor: choiceData.door,
-      survived,
-      wasAuto: choiceData.auto || false,
-    });
-
-    if (survived) {
-      player.roomsSurvived++;
-      survivors.push(player.username);
-    } else {
       player.alive = false;
-      eliminated.push(player.username);
+      session.players.delete(socket.id);
+      io.to(code).emit('playerEliminated', { username: player.username, reason: 'disconnected' });
+      if (session.getAlivePlayers().length === 0) endGame(code, io, session);
     }
-  }
+    reconnectTimers.delete(timerKey);
+  }, graceSeconds * 1000);
 
-  // Update DB match rooms log
-  await Match.findOneAndUpdate(
-    { matchId: session.matchId },
-    {
-      $push: {
-        rooms: {
-          roomNumber: room.roomNumber,
-          roomId: room.roomId,
-          clueId: room.clueId,
-          clueText: room.clueText,
-          correctDoor,
-          difficulty: room.difficulty,
-          survivorCount: survivors.length,
-          eliminatedCount: eliminated.length,
-        },
-      },
-    }
-  );
-
-  // Emit result reveal with a small delay for dramatic effect
-  setTimeout(() => {
-    io.to(roomCode).emit('roundResult', {
-      correctDoor,
-      results,
-      survivors,
-      eliminated,
-      session: session.toPublicState(),
-    });
-
-    // Emit elimination events
-    for (const username of eliminated) {
-      io.to(roomCode).emit('playerEliminated', { username });
-    }
-  }, 1000); // 1s delay for dramatic effect (anti-cheat: delay prevents timing attacks)
-
-  // Decide next step after reveal display
-  session.revealTimer = setTimeout(async () => {
-    const alivePlayers = session.getAlivePlayers();
-
-    if (alivePlayers.length === 0) {
-      // Everyone eliminated
-      endGame(roomCode, io, session);
-    } else if (session.currentRoomIndex >= session.rooms.length - 1) {
-      // All rooms cleared
-      endGame(roomCode, io, session, alivePlayers);
-    } else {
-      // Next room
-      session.currentRoomIndex++;
-      io.to(roomCode).emit('nextRoom', {
-        nextRoomNumber: session.currentRoomIndex + 1,
-        alivePlayers: alivePlayers.length,
-        session: session.toPublicState(),
-      });
-      setTimeout(() => startRoom(roomCode, io, session), 3000);
-    }
-  }, 6000); // 6s to show results
+  reconnectTimers.set(timerKey, t);
 }
 
-/**
- * Ends the game, saves stats
- */
-async function endGame(roomCode, io, session, winners = []) {
-  clearTimeout(session.roundTimer);
-  clearTimeout(session.revealTimer);
-  session.status = 'completed';
-  session.roundPhase = 'idle';
-
-  const winnerUsernames = winners.map((p) => p.username);
-
-  // Persist match completion
-  const playerUpdates = [];
-
-  for (const player of session.getAllPlayers()) {
-    const isWinner = winnerUsernames.includes(player.username);
-
-    playerUpdates.push(
-      Player.findByIdAndUpdate(player.playerId, {
-        $inc: {
-          gamesPlayed: 1,
-          'stats.gamesPlayed': 1,
-          'stats.wins': isWinner ? 1 : 0,
-          'stats.totalRoomsSurvived': player.roomsSurvived,
-          'stats.totalEliminations': isWinner ? 0 : 1,
-        },
-      })
-    );
-  }
-
-  await Promise.all([
-    ...playerUpdates,
-    Match.findOneAndUpdate(
-      { matchId: session.matchId },
-      {
-        status: 'completed',
-        endedAt: new Date(),
-        winnersCount: winners.length,
-        'players.$[].isWinner': false, // reset, then set below
-      }
-    ),
-  ]);
-
-  io.to(roomCode).emit('gameEnd', {
-    winners: winnerUsernames,
-    allPlayers: session.getAllPlayers().map((p) => ({
-      username: p.username,
-      roomsSurvived: p.roomsSurvived,
-      alive: p.alive,
-    })),
-    totalRooms: session.rooms.length,
-  });
-
-  // Clean up session after delay
-  setTimeout(() => {
-    activeSessions.delete(roomCode);
-    console.log(`🗑️ Session ${roomCode} cleaned up`);
-  }, 60000);
-}
-
-/**
- * Handles a player leaving a room
- */
-function handlePlayerLeave(socket, roomCode, io) {
-  const code = typeof roomCode === 'string' ? roomCode.toUpperCase() : roomCode;
+function handleLeave(socket, code, io, isDisconnect) {
   const session = activeSessions.get(code);
   if (!session) return;
-
   const player = session.players.get(socket.id);
   session.spectators.delete(socket.id);
-
   if (player) {
     session.players.delete(socket.id);
-    socket.leave(code);
-
-    io.to(code).emit('playerLeft', {
-      username: player.username,
-      session: session.toPublicState(),
-    });
-
-    // If host leaves, transfer host or end session
+    if (!isDisconnect) socket.leave(code);
+    io.to(code).emit('playerLeft', { username: player.username, session: session.toPublicState() });
     if (session.createdBy === player.playerId && session.status === 'waiting') {
       const remaining = [...session.players.values()];
       if (remaining.length === 0) {
@@ -645,6 +448,166 @@ function handlePlayerLeave(socket, roomCode, io) {
       }
     }
   }
+}
+
+function startCountdown(code, io, session) {
+  if (session.status !== 'waiting') return;
+  session.status = 'countdown';
+  io.to(code).emit('countdownStarted', { seconds: 5 });
+  let count = 5;
+  const interval = setInterval(() => {
+    count--;
+    io.to(code).emit('countdownTick', { seconds: count });
+    if (count <= 0) { clearInterval(interval); setTimeout(() => beginGame(code, io, session), 800); }
+  }, 1000);
+}
+
+async function beginGame(code, io, session) {
+  try {
+    session.status = 'in_progress';
+
+    const playerIds = [...session.players.values()].map(p => p.playerId);
+    const players   = await Player.find({ _id: { $in: playerIds } });
+    const excludeIds = players.flatMap(p => p.getRecentClueIds ? p.getRecentClueIds() : []);
+
+    session.rooms = await generateRoomSequence(session.players.size, excludeIds, session.difficultyCurve);
+
+    await Match.findOneAndUpdate(
+      { matchId: session.matchId },
+      { status: 'in_progress', startedAt: new Date(), totalRooms: session.rooms.length }
+    );
+
+    // FIX: emit gameStarted AFTER rooms are generated so totalRooms is correct
+    io.to(code).emit('gameStarted', { totalRooms: session.rooms.length, session: session.toPublicState() });
+
+    setTimeout(() => startRoom(code, io, session), 2000);
+  } catch (err) {
+    logger.error('beginGame error:', err);
+    io.to(code).emit('error', { message: 'Failed to start game: ' + err.message });
+    session.status = 'waiting';
+  }
+}
+
+async function startRoom(code, io, session) {
+  session.choices.clear();
+  session.roundPhase = 'puzzle';
+  session.puzzleStartTime = Date.now();
+  for (const p of session.players.values()) p.skippedToDoor = false;
+
+  const room = session.getCurrentRoom();
+  if (!room) return endGame(code, io, session);
+
+  const settings = await GameSettings.getSingleton();
+  const timerSecs = settings.puzzleTimerSeconds || 30;
+
+  io.to(code).emit('roomStarted', {
+    roomNumber: room.roomNumber, environment: room.environment,
+    clueCategory: room.clueCategory, clueText: room.clueText,
+    flavorText: room.flavorText, hints: room.hints,
+    ambientObjects: room.ambientObjects,
+    timerSeconds: timerSecs, totalRooms: session.rooms.length,
+    difficulty: room.difficulty, session: session.toPublicState(),
+  });
+
+  session.roundTimer = setTimeout(() => startDoorSelection(code, io, session), timerSecs * 1000);
+}
+
+async function startDoorSelection(code, io, session) {
+  clearTimeout(session.roundTimer);
+  session.roundPhase = 'door_selection';
+  session.doorStartTime = Date.now();
+
+  const settings = await GameSettings.getSingleton();
+  const doorTimer = settings.doorTimerSeconds || 30;
+
+  io.to(code).emit('doorSelectionStarted', { timerSeconds: doorTimer, session: session.toPublicState() });
+
+  session.roundTimer = setTimeout(() => {
+    for (const player of session.getAlivePlayers()) {
+      if (!session.choices.has(player.socketId)) {
+        session.choices.set(player.socketId, {
+          door: Math.random() > 0.5 ? 'LIVE' : 'DIE',
+          chosenAt: Date.now(), auto: true,
+        });
+      }
+    }
+    revealResults(code, io, session);
+  }, doorTimer * 1000);
+}
+
+async function revealResults(code, io, session) {
+  clearTimeout(session.roundTimer);
+  session.roundPhase = 'reveal';
+
+  const room = session.getCurrentRoom();
+  const correctDoor = room.correctDoor;
+  const results = [], survivors = [], eliminated = [];
+
+  for (const [sid, choice] of session.choices) {
+    const player = session.players.get(sid);
+    if (!player || !player.alive) continue;
+    const survived = validateDoorChoice(room, choice.door);
+    results.push({ username: player.username, chosenDoor: choice.door, survived, wasAuto: !!choice.auto });
+    if (survived) { player.roomsSurvived++; survivors.push(player.username); }
+    else           { player.alive = false;  eliminated.push(player.username); }
+  }
+
+  await Match.findOneAndUpdate({ matchId: session.matchId }, {
+    $push: {
+      rooms: {
+        roomNumber: room.roomNumber, roomId: room.roomId, clueId: room.clueId,
+        clueText: room.clueText, correctDoor, difficulty: room.difficulty,
+        survivorCount: survivors.length, eliminatedCount: eliminated.length,
+      },
+    },
+  });
+
+  setTimeout(() => {
+    io.to(code).emit('roundResult', { correctDoor, results, survivors, eliminated, session: session.toPublicState() });
+    for (const username of eliminated) io.to(code).emit('playerEliminated', { username });
+  }, 1000);
+
+  session.revealTimer = setTimeout(async () => {
+    const alive = session.getAlivePlayers();
+    if (alive.length === 0) { endGame(code, io, session); return; }
+    if (session.currentRoomIndex >= session.rooms.length - 1) { endGame(code, io, session, alive); return; }
+    session.currentRoomIndex++;
+    io.to(code).emit('nextRoom', { nextRoomNumber: session.currentRoomIndex + 1, alivePlayers: alive.length, session: session.toPublicState() });
+    setTimeout(() => startRoom(code, io, session), 3000);
+  }, 6000);
+}
+
+async function endGame(code, io, session, winners = []) {
+  clearTimeout(session.roundTimer);
+  clearTimeout(session.revealTimer);
+  session.status = 'completed';
+  session.roundPhase = 'idle';
+
+  const winnerUsernames = winners.map(p => p.username);
+  const updates = session.getAllPlayers().map(player => {
+    const isWinner = winnerUsernames.includes(player.username);
+    return Player.findByIdAndUpdate(player.playerId, {
+      $inc: {
+        gamesPlayed: 1, 'stats.gamesPlayed': 1,
+        'stats.wins': isWinner ? 1 : 0,
+        'stats.totalRoomsSurvived': player.roomsSurvived,
+        'stats.totalEliminations': isWinner ? 0 : 1,
+      },
+    });
+  });
+
+  await Promise.all([
+    ...updates,
+    Match.findOneAndUpdate({ matchId: session.matchId }, { status: 'completed', endedAt: new Date(), winnersCount: winners.length }),
+  ]);
+
+  io.to(code).emit('gameEnd', {
+    winners: winnerUsernames,
+    allPlayers: session.getAllPlayers().map(p => ({ username: p.username, roomsSurvived: p.roomsSurvived, alive: p.alive })),
+    totalRooms: session.rooms.length,
+  });
+
+  setTimeout(() => { activeSessions.delete(code); logger.info(`🗑️  Session ${code} cleaned up`); }, 120000);
 }
 
 module.exports = initSocketHandlers;

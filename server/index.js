@@ -1,109 +1,100 @@
 /**
- * Dead or Alive: Logic Escape - Main Server Entry Point
- * Sets up Express, Socket.io, MongoDB connection, and routes
+ * Dead or Alive: Logic Escape — Server Entry Point Phase 1
  */
-
 require('dotenv').config();
-const express = require('express');
-const http = require('http');
-const cors = require('cors');
-const { Server } = require('socket.io');
+const express  = require('express');
+const http     = require('http');
+const cors     = require('cors');
+const helmet   = require('helmet');
 const mongoose = require('mongoose');
+const { Server } = require('socket.io');
 
-// Import routes
-const authRoutes = require('./routes/auth');
-const gameRoutes = require('./routes/game');
-const clueRoutes = require('./routes/clues');
-const statsRoutes = require('./routes/stats');
-const adminRoutes = require('./routes/admin');
+const authRoutes    = require('./routes/auth');
+const gameRoutes    = require('./routes/game');
+const clueRoutes    = require('./routes/clues');
+const settingsRoutes= require('./routes/settings');
+const { statsRouter, adminRouter } = require('./routes/statsAdmin');
+const initSocket    = require('./socket/socketHandlers');
+const { apiLimiter }= require('./middleware/security');
+const GameSettings  = require('./models/GameSettings');
+const logger        = require('./utils/logger');
 
-// Import socket handler
-const initSocketHandlers = require('./socket/socketHandlers');
-
-const app = express();
+const app    = express();
 const server = http.createServer(app);
 
-// ─── CORS Configuration ───────────────────────────────────────────────────────
-const corsOptions = {
-  origin: process.env.CLIENT_URL || 'http://localhost:5173',
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-};
+// ── Security headers ──────────────────────────────────────────────────────────
+app.use(helmet({ contentSecurityPolicy: false }));
 
+// ── CORS ──────────────────────────────────────────────────────────────────────
+const corsOptions = {
+  origin: (process.env.CLIENT_URL || 'http://localhost:5173').split(',').map(s => s.trim()),
+  credentials: true,
+  methods: ['GET','POST','PUT','PATCH','DELETE'],
+};
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// ─── Socket.io Setup ──────────────────────────────────────────────────────────
-const io = new Server(server, {
-  cors: corsOptions,
-  pingTimeout: 60000,
-  pingInterval: 25000,
-  transports: ['websocket', 'polling'],
+// ── Maintenance mode middleware ───────────────────────────────────────────────
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api/auth') || req.path === '/health') return next();
+  try {
+    const settings = await GameSettings.getSingleton();
+    if (settings.features.maintenanceMode)
+      return res.status(503).json({ error: 'Server under maintenance. Check back soon.' });
+  } catch (_) {}
+  next();
 });
 
-// Attach io to app for use in routes
-app.set('io', io);
+// ── Routes ────────────────────────────────────────────────────────────────────
+app.use('/api/auth',     apiLimiter, authRoutes);
+app.use('/api/game',     apiLimiter, gameRoutes);
+app.use('/api/clues',    apiLimiter, clueRoutes);
+app.use('/api/settings', apiLimiter, settingsRoutes);
+app.use('/api/stats',    apiLimiter, statsRouter);
+app.use('/api/admin',    apiLimiter, adminRouter);
 
-// ─── API Routes ───────────────────────────────────────────────────────────────
-app.use('/api/auth', authRoutes);
-app.use('/api/game', gameRoutes);
-app.use('/api/clues', clueRoutes);
-app.use('/api/stats', statsRoutes);
-app.use('/api/admin', adminRoutes);
+// ── Health check ──────────────────────────────────────────────────────────────
+app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-  });
-});
+// ── 404 ───────────────────────────────────────────────────────────────────────
+app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 
-// 404 handler
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
-});
-
-// Global error handler
+// ── Error handler ─────────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err);
+  logger.error('Unhandled error:', err);
   res.status(err.status || 500).json({
     error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message,
   });
 });
 
-// ─── Socket Handlers ──────────────────────────────────────────────────────────
-initSocketHandlers(io);
+// ── Socket.io ─────────────────────────────────────────────────────────────────
+const io = new Server(server, {
+  cors: corsOptions,
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  transports: ['websocket','polling'],
+});
+app.set('io', io);
+initSocket(io);
 
-// ─── MongoDB Connection ───────────────────────────────────────────────────────
+// ── MongoDB ───────────────────────────────────────────────────────────────────
 const connectDB = async () => {
-  try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/dead-or-alive');
-    console.log('✅ MongoDB connected');
-  } catch (err) {
-    console.error('❌ MongoDB connection failed:', err.message);
-    process.exit(1);
-  }
+  await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/dead-or-alive');
+  logger.info('✅ MongoDB connected');
+  // Ensure settings singleton exists
+  await GameSettings.getSingleton();
 };
 
-// ─── Start Server ─────────────────────────────────────────────────────────────
+// ── Start ─────────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
-
 connectDB().then(() => {
   server.listen(PORT, () => {
-    console.log(`🎮 Dead or Alive server running on port ${PORT}`);
-    console.log(`🌐 Environment: ${process.env.NODE_ENV || 'development'}`);
+    logger.info(`🎮 Server running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
   });
+}).catch(err => {
+  logger.error('Startup failed:', err);
+  process.exit(1);
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  server.close(() => {
-    mongoose.connection.close(false, () => {
-      console.log('Server shut down gracefully');
-      process.exit(0);
-    });
-  });
-});
+process.on('SIGTERM', () => server.close(() => mongoose.connection.close(false, () => process.exit(0))));

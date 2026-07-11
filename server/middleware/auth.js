@@ -1,58 +1,75 @@
 /**
- * Auth Middleware
- * Verifies JWT tokens for protected routes
- *
- * Admin check priority:
- *  1. Player's _id is in the ADMIN_IDS env variable (comma-separated list)
- *  2. Player's role field in DB is 'admin'
- * Either condition grants admin access — env list takes precedence so you
- * never need a DB migration to bootstrap the first admin.
+ * Auth Middleware — Phase 1
+ * JWT access + refresh tokens, admin ADMIN_IDS env check, ban check
  */
-
 const jwt = require('jsonwebtoken');
 const Player = require('../models/Player');
+const AuditLog = require('../models/AuditLog');
 
-// Parse admin IDs from env once at startup
 const ADMIN_IDS = (process.env.ADMIN_IDS || '')
-  .split(',')
-  .map((id) => id.trim())
-  .filter(Boolean);
+  .split(',').map(s => s.trim()).filter(Boolean);
 
+// ── Verify access token ───────────────────────────────────────────────────────
 const protect = async (req, res, next) => {
   try {
     let token;
-
-    if (req.headers.authorization?.startsWith('Bearer ')) {
+    if (req.headers.authorization?.startsWith('Bearer '))
       token = req.headers.authorization.split(' ')[1];
-    }
 
-    if (!token) {
-      return res.status(401).json({ error: 'Not authorized, no token' });
-    }
+    if (!token) return res.status(401).json({ error: 'No token provided' });
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.player = await Player.findById(decoded.id).select('-password');
+    const player = await Player.findById(decoded.id).select('-password -otp');
+    if (!player) return res.status(401).json({ error: 'Player not found' });
 
-    if (!req.player) {
-      return res.status(401).json({ error: 'Player not found' });
+    // Ban check
+    if (player.isBanned) {
+      const stillBanned = !player.banUntil || player.banUntil > new Date();
+      if (stillBanned) return res.status(403).json({ error: 'Account banned', reason: player.banReason });
+      // Ban expired — lift it
+      await Player.findByIdAndUpdate(player._id, { isBanned: false });
     }
 
-    // Attach isAdmin flag for convenience in route handlers
-    req.player.isAdmin =
-      ADMIN_IDS.includes(req.player._id.toString()) ||
-      req.player.role === 'admin';
-
+    player.isAdmin = ADMIN_IDS.includes(player._id.toString()) || player.role === 'admin';
+    req.player = player;
     next();
   } catch (err) {
-    return res.status(401).json({ error: 'Token invalid or expired' });
+    if (err.name === 'TokenExpiredError')
+      return res.status(401).json({ error: 'Token expired', code: 'TOKEN_EXPIRED' });
+    return res.status(401).json({ error: 'Invalid token' });
   }
 };
 
+// ── Admin only ────────────────────────────────────────────────────────────────
 const adminOnly = (req, res, next) => {
-  if (!req.player?.isAdmin) {
+  if (!req.player?.isAdmin)
     return res.status(403).json({ error: 'Admin access required' });
-  }
   next();
 };
 
-module.exports = { protect, adminOnly, ADMIN_IDS };
+// ── Subscribed only ───────────────────────────────────────────────────────────
+const subscribedOnly = (req, res, next) => {
+  if (!req.player?.isSubscribed())
+    return res.status(403).json({ error: 'Active subscription required' });
+  next();
+};
+
+// ── Verified only ─────────────────────────────────────────────────────────────
+const verifiedOnly = (req, res, next) => {
+  if (!req.player?.isVerified && !req.player?.isSubscribed())
+    return res.status(403).json({ error: 'Verified account required' });
+  next();
+};
+
+// ── Audit log helper ──────────────────────────────────────────────────────────
+const audit = async (adminId, adminName, action, target, details, req) => {
+  try {
+    await AuditLog.create({
+      adminId, adminName, action, target, details,
+      ip: req?.ip,
+      userAgent: req?.headers?.['user-agent'],
+    });
+  } catch (_) { }
+};
+
+module.exports = { protect, adminOnly, subscribedOnly, verifiedOnly, audit, ADMIN_IDS };

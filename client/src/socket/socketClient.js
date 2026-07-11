@@ -1,199 +1,130 @@
 /**
- * Socket Client
- * Singleton socket.io client with all game event handlers wired to Zustand stores
+ * socketClient.js — Fixed
+ *
+ * Fixes:
+ *   1. "Socket connected: undefined" — log socket.id after a tick
+ *   2. Double-connection — checks socket.connected AND socket.active
+ *   3. auth is a function so socket.io calls it fresh on every reconnect
  */
 import { io } from 'socket.io-client';
 import useGameStore from '../store/gameStore';
 import useAuthStore from '../store/authStore';
+import { isExpiringSoon } from '../utils/jwt';
 
 let socket = null;
+let tokenRefreshErrorCount = 0;
 
-/**
- * Connect to server and register all event listeners
- */
+async function resolveToken() {
+  const { accessToken, refreshAccessToken } = useAuthStore.getState();
+  if (!accessToken) return null;
+  if (isExpiringSoon(accessToken, 30000)) {
+    try { return await refreshAccessToken(); } catch (_) { return accessToken; }
+  }
+  return accessToken;
+}
+
 export function connectSocket() {
-  const token = useAuthStore.getState().token;
-  if (!token) return null;
-  if (socket?.connected) return socket;
+  const { accessToken } = useAuthStore.getState();
+  if (!accessToken) return null;
+
+  // Guard against double-connect
+  if (socket && (socket.connected || socket.active)) return socket;
+
+  // Clean up dead socket before creating new one
+  if (socket) {
+    socket.removeAllListeners();
+    socket.disconnect();
+    socket = null;
+  }
 
   socket = io(import.meta.env.VITE_SOCKET_URL || window.location.origin, {
-    auth: { token },
+    auth: async (cb) => {
+      const token = await resolveToken();
+      cb({ token: token ? `Bearer ${token}` : undefined });
+    },
     transports: ['websocket', 'polling'],
-    reconnectionAttempts: 5,
+    reconnection: true,
+    reconnectionAttempts: Infinity,
     reconnectionDelay: 1000,
+    reconnectionDelayMax: 10000,
   });
 
-  // ── Connection events ────────────────────────────────────────────────────────
   socket.on('connect', () => {
-    console.log('✅ Socket connected:', socket.id);
+    // socket.id may not be set synchronously in some socket.io versions
+    setTimeout(() => console.log('✅ Socket connected:', socket?.id), 0);
+    tokenRefreshErrorCount = 0;
   });
 
   socket.on('disconnect', (reason) => {
     console.warn('⚠️ Socket disconnected:', reason);
-    useGameStore.getState().showNotification('Connection lost. Reconnecting…', 'warning');
-  });
-
-  socket.on('connect_error', (err) => {
-    console.error('Socket error:', err.message);
-    useGameStore.getState().showNotification('Connection error: ' + err.message, 'error');
-  });
-
-  socket.on('reconnect', () => {
-    useGameStore.getState().showNotification('Reconnected!', 'success');
-  });
-
-  // ── Room events ──────────────────────────────────────────────────────────────
-  socket.on('roomCreated', ({ roomCode, session }) => {
-    const store = useGameStore.getState();
-    store.setRoomCode(roomCode);
-    store.updateSession(session);
-  });
-
-  socket.on('joinedRoom', ({ session }) => {
-    useGameStore.getState().updateSession(session);
-  });
-
-  socket.on('reconnected', ({ session }) => {
-    useGameStore.getState().updateSession(session);
-    useGameStore.getState().showNotification('Reconnected to game!', 'success');
-  });
-
-  socket.on('playerJoined', ({ username, session }) => {
-    useGameStore.getState().updateSession(session);
-    useGameStore.getState().showNotification(`${username} joined the room`, 'info');
-  });
-
-  socket.on('playerLeft', ({ username, session }) => {
-    useGameStore.getState().updateSession(session);
-    useGameStore.getState().showNotification(`${username} left the room`, 'warning');
-  });
-
-  socket.on('hostTransferred', ({ newHost }) => {
-    useGameStore.getState().showNotification(`${newHost} is now the host`, 'info');
-  });
-
-  socket.on('playerReadyUpdate', ({ username, session }) => {
-    useGameStore.getState().updateSession(session);
-  });
-
-  // ── Countdown ────────────────────────────────────────────────────────────────
-  socket.on('countdownStarted', ({ seconds }) => {
-    useGameStore.getState().setCountdown(seconds);
-  });
-
-  socket.on('countdownTick', ({ seconds }) => {
-    useGameStore.getState().setCountdown(seconds);
-  });
-
-  // ── Game start ───────────────────────────────────────────────────────────────
-  socket.on('gameStarted', ({ totalRooms, session }) => {
-    const store = useGameStore.getState();
-    // Update totalRooms in store; navigation is handled by WaitingRoomPage listener
-    if (totalRooms > 0) {
-      useGameStore.setState({ totalRooms });
+    if (reason !== 'io client disconnect') {
+      useGameStore.getState().showNotification?.('Connection lost. Reconnecting…', 'warning');
     }
-    if (session) store.updateSession(session);
   });
 
-  // ── Room puzzle phase ────────────────────────────────────────────────────────
-  socket.on('roomStarted', (roomData) => {
-    const store = useGameStore.getState();
-    store.clearRoundState();
-    store.stopTimer();
-    useGameStore.setState({
-      currentRoom: roomData,
-      roundPhase: 'puzzle',
-      currentRoomIndex: (roomData.roomNumber || 1) - 1,
-      totalRooms: roomData.totalRooms || useGameStore.getState().totalRooms,
-    });
-    // Use server-provided timerSeconds (puzzle phase = 30s by default)
-    store.startTimer(roomData.timerSeconds || 30);
+  socket.on('reconnect', (attempt) => {
+    useGameStore.getState().showNotification?.('Reconnected!', 'success');
   });
 
-  // ── Door selection phase ─────────────────────────────────────────────────────
-  socket.on('doorSelectionStarted', ({ timerSeconds }) => {
-    const store = useGameStore.getState();
-    store.stopTimer();
-    useGameStore.setState({ roundPhase: 'door_selection' });
-    store.startTimer(timerSeconds || 30);
-  });
-
-  // ── Choice update (how many chose) ───────────────────────────────────────────
-  socket.on('choiceUpdate', ({ chosenCount, totalAlive, username }) => {
-    useGameStore.setState({ chosenCount });
-  });
-
-  // ── Round result reveal ───────────────────────────────────────────────────────
-  socket.on('roundResult', (results) => {
-    const store = useGameStore.getState();
-    store.stopTimer();
-    // Update session players list (alive status changed) but keep roundPhase = 'reveal'
-    if (results.session) {
-      useGameStore.setState({
-        session: results.session,
-        // Explicitly keep reveal phase — don't let updateSession's logic override it
-        roundPhase: 'reveal',
-      });
+  socket.on('connect_error', async (err) => {
+    const msg = err?.message || '';
+    if (/token expired|invalid token|authentication required/i.test(msg)) {
+      tokenRefreshErrorCount += 1;
+      if (tokenRefreshErrorCount > 3) {
+        useGameStore.getState().showNotification?.('Session expired. Please sign in again.', 'error');
+        disconnectSocket();
+        return;
+      }
+      try {
+        await useAuthStore.getState().refreshAccessToken();
+        socket.connect();
+      } catch (_) {}
     }
-    store.setRoundResults(results);
   });
 
-  socket.on('playerEliminated', ({ username }) => {
-    useGameStore.getState().showNotification(`💀 ${username} was eliminated!`, 'elimination');
+  socket.on('playerJoined',      ({ username, session }) => {
+    useGameStore.getState().updateSession?.(session);
+    useGameStore.getState().showNotification?.(`${username} joined`, 'info');
   });
-
-  // ── Next room transition ──────────────────────────────────────────────────────
-  socket.on('nextRoom', ({ nextRoomNumber, alivePlayers }) => {
-    useGameStore.setState({ roundPhase: 'transition' });
-    useGameStore.getState().showNotification(
-      `Room ${nextRoomNumber} — ${alivePlayers} survivors remain`, 'info'
-    );
+  socket.on('playerLeft',        ({ username, session }) => {
+    useGameStore.getState().updateSession?.(session);
+    useGameStore.getState().showNotification?.(`${username} left`, 'warning');
   });
-
-  // ── Game end ──────────────────────────────────────────────────────────────────
-  socket.on('gameEnd', (data) => {
-    useGameStore.getState().stopTimer();
-    useGameStore.getState().setGameEndData(data);
+  socket.on('playerDisconnected',({ username, graceSeconds }) => {
+    useGameStore.getState().showNotification?.(`${username} disconnected (${graceSeconds}s to reconnect)`, 'warning');
   });
-
-  // ── Chat ──────────────────────────────────────────────────────────────────────
-  socket.on('chatMessage', (msg) => {
-    useGameStore.getState().addChatMessage(msg);
+  socket.on('playerReconnected', ({ username, session }) => {
+    useGameStore.getState().updateSession?.(session);
+    useGameStore.getState().showNotification?.(`${username} reconnected`, 'success');
   });
-
-  // ── Spectator ─────────────────────────────────────────────────────────────────
-  socket.on('joinedAsSpectator', ({ session }) => {
-    useGameStore.getState().updateSession(session);
-    useGameStore.getState().showNotification('Joined as spectator', 'info');
+  socket.on('hostTransferred',   ({ newHost }) => {
+    useGameStore.getState().showNotification?.(`${newHost} is now the host`, 'info');
   });
-
-  // ── Server errors ─────────────────────────────────────────────────────────────
-  socket.on('error', ({ message }) => {
-    useGameStore.getState().showNotification(message, 'error');
+  socket.on('countdownStarted',  ({ seconds }) => {
+    useGameStore.getState().setCountdown?.(seconds);
+  });
+  socket.on('countdownTick',     ({ seconds }) => {
+    useGameStore.getState().setCountdown?.(seconds);
+  });
+  socket.on('error',             ({ message }) => {
+    useGameStore.getState().showNotification?.(message, 'error');
   });
 
   return socket;
 }
 
-export function getSocket() {
-  return socket;
-}
-
+export function getSocket()      { return socket; }
 export function disconnectSocket() {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
-  }
+  if (socket) { socket.removeAllListeners(); socket.disconnect(); socket = null; }
 }
-
-// ── Emit helpers ──────────────────────────────────────────────────────────────
 
 export const emit = {
-  createRoom: (opts) => socket?.emit('createRoom', opts),
-  joinRoom: (roomCode, spectate = false) => socket?.emit('joinRoom', { roomCode, spectate }),
-  leaveRoom: (roomCode) => socket?.emit('leaveRoom', { roomCode }),
-  playerReady: (roomCode) => socket?.emit('playerReady', { roomCode }),
-  startGame: (roomCode) => socket?.emit('startGame', { roomCode }),
-  chooseDoor: (roomCode, door) => socket?.emit('playerChooseDoor', { roomCode, door }),
-  sendChat: (roomCode, message) => socket?.emit('chatMessage', { roomCode, message }),
+  createRoom:  (opts)                  => socket?.emit('createRoom', opts),
+  joinRoom:    (roomCode, spectate=false) => socket?.emit('joinRoom', { roomCode, spectate }),
+  leaveRoom:   (roomCode)              => socket?.emit('leaveRoom', { roomCode }),
+  playerReady: (roomCode)              => socket?.emit('playerReady', { roomCode }),
+  startGame:   (roomCode)              => socket?.emit('startGame', { roomCode }),
+  skipToDoor:  (roomCode)              => socket?.emit('playerSkipToDoor', { roomCode }),
+  chooseDoor:  (roomCode, door)        => socket?.emit('playerChooseDoor', { roomCode, door }),
+  sendChat:    (roomCode, message)     => socket?.emit('chatMessage', { roomCode, message }),
 };

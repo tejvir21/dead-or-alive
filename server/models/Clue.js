@@ -1,78 +1,55 @@
 /**
- * Clue Model
- * Stores clue templates with variables for dynamic generation
+ * Clue Model — Phase 1
+ * Supports difficulty 1-10, 14 categories, progressive hints
  */
-
 const mongoose = require('mongoose');
 
-// ── Explicit subdocument schema for variables ─────────────────────────────────
-// Using a named schema prevents Mongoose casting the array as [String]
 const variableSchema = new mongoose.Schema(
   {
-    name:    { type: String, default: '' },   // placeholder name, e.g. "X"
-    type:    { type: String, default: 'number', enum: ['number', 'letter', 'choice', 'word', 'symbol'] },
+    name:    { type: String, default: '' },
+    type:    { type: String, default: 'number', enum: ['number','letter','choice','word','symbol'] },
     min:     { type: Number, default: 1 },
     max:     { type: Number, default: 10 },
-    options: { type: [String], default: [] }, // for choice/word types
+    options: { type: [String], default: [] },
   },
-  { _id: false } // no separate _id per variable
+  { _id: false }
 );
 
 const clueSchema = new mongoose.Schema(
   {
-    clueId: {
-      type: String,
-      unique: true,
-      required: true,
-    },
-    // ── Category ─────────────────────────────────────────────────────────────
+    clueId:   { type: String, unique: true, required: true },
     category: {
       type: String,
-      enum: ['number', 'word', 'symbol', 'environment', 'logic', 'pattern', 'sound'],
       required: true,
+      enum: [
+        // Original 7
+        'number','word','symbol','environment','logic','pattern','sound',
+        // New 7
+        'math','binary','cipher','spatial','time','color','riddle',
+      ],
     },
-    // ── Template with {variable} placeholders ────────────────────────────────
-    template: {
-      type: String,
-      required: true,
-    },
-    // ── Answer rule describes how to evaluate correctness ────────────────────
-    answerRule: {
-      type: String,
-      required: true,
-    },
-    // ── Variable definitions ─────────────────────────────────────────────────
-    variables: {
-      type: [variableSchema],
-      default: [],
-    },
-    // ── Difficulty ───────────────────────────────────────────────────────────
-    difficulty: {
-      type: Number,
-      min: 1,
-      max: 5,
-      default: 1,
-    },
-    // ── Flavor text ──────────────────────────────────────────────────────────
-    flavorText: {
-      type: String,
-      default: '',
-    },
-    // ── Progressive hints ────────────────────────────────────────────────────
-    hints: {
-      type: [String],
-      default: [],
-    },
-    // ── Usage tracking ────────────────────────────────────────────────────────
-    timesUsed: { type: Number, default: 0 },
-    isActive:  { type: Boolean, default: true },
+    // NOTE: template is NOT a hard-unique DB constraint. Duplicate prevention
+    // happens at the application level (see routes/clues.js sanitizeClue +
+    // bulk-import dedup logic). A hard unique index here would fail to build
+    // if any pre-existing duplicate templates exist in production data from
+    // earlier seed runs — run `npm run migrate` to clean those up safely
+    // before optionally adding a unique constraint yourself.
+    template:   { type: String, required: true },
+    answerRule: { type: String, required: true },
+    variables:  { type: [variableSchema], default: [] },
+    difficulty: { type: Number, min: 1, max: 10, default: 1 },
+    flavorText: { type: String, default: '' },
+    hints:      { type: [String], default: [] }, // 0-2 hints based on difficulty
+    timesUsed:  { type: Number, default: 0 },
+    isActive:   { type: Boolean, default: true },
+    // Metadata for admin
+    tags:       { type: [String], default: [] },
+    createdBy:  { type: String, default: 'system' },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-// Index for efficient category + difficulty queries
 clueSchema.index({ category: 1, difficulty: 1, isActive: 1 });
+clueSchema.index({ template: 1 }); // non-unique, speeds up duplicate-check queries
 
 module.exports = mongoose.model('Clue', clueSchema);

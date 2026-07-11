@@ -1,147 +1,97 @@
 /**
- * AdminPage — Full clue management panel
- * Only accessible when player.isAdmin === true (verified server-side via ADMIN_IDS env or role)
+ * AdminPage.jsx — Fixed
  *
- * Sections:
- *  - Stats bar (total clues, active, inactive, by category)
- *  - Clue list with filter/search, toggle, delete, inline edit
- *  - Create new clue form
- *  - Bulk JSON import
+ * Bugs fixed:
+ *   1. Stats showed wrong category counts (all 0) because it counted categories
+ *      from the paginated API response (50 clues) instead of all clues.
+ *      Fix: now calls GET /api/clues/stats which does a server-side MongoDB
+ *      aggregation across ALL clues and returns exact counts per category.
+ *
+ *   2. Used raw fetch with the old `token` field — now uses apiJSON/apiFetch
+ *      which handles auth + auto-refresh transparently.
+ *
+ *   3. Clue list now properly paginates with Load More, instead of being
+ *      silently capped at 50.
  */
 import React, { useState, useEffect, useCallback } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import useAuthStore from '../store/authStore';
+import { apiJSON, apiFetch } from '../api/apiClient';
 
-const API = import.meta.env.VITE_API_URL || '/api';
-
-const CATEGORIES = ['number', 'word', 'symbol', 'environment', 'logic', 'pattern', 'sound'];
-const DIFFICULTIES = [1, 2, 3, 4, 5];
-
-const CATEGORY_COLORS = {
-  number:      'text-blue-400 border-blue-700/50 bg-blue-900/20',
-  word:        'text-purple-400 border-purple-700/50 bg-purple-900/20',
-  symbol:      'text-yellow-400 border-yellow-700/50 bg-yellow-900/20',
-  environment: 'text-green-400 border-green-700/50 bg-green-900/20',
-  logic:       'text-red-400 border-red-700/50 bg-red-900/20',
-  pattern:     'text-cyan-400 border-cyan-700/50 bg-cyan-900/20',
-  sound:       'text-pink-400 border-pink-700/50 bg-pink-900/20',
-};
+// ── Constants ─────────────────────────────────────────────────────────────────
+const ALL_CATEGORIES = [
+  'number','word','symbol','environment','logic','pattern','sound',
+  'math','binary','cipher','spatial','time','color','riddle',
+];
 
 const EMPTY_CLUE = {
-  category: 'number',
-  template: '',
-  answerRule: '',
-  flavorText: '',
-  difficulty: 1,
-  hints: [],
-  variables: [],
+  category:'number', template:'', answerRule:'', flavorText:'',
+  difficulty:1, hints:[], variables:[],
 };
 
-// ── Tiny helpers ──────────────────────────────────────────────────────────────
-const DifficultyDots = ({ level }) => (
-  <div className="flex gap-0.5">
-    {[1, 2, 3, 4, 5].map((d) => (
-      <div
-        key={d}
-        className={`w-2 h-2 rounded-full ${
-          d <= level ? 'bg-orange-400' : 'bg-white/10'
-        }`}
-      />
-    ))}
-  </div>
-);
-
-const Badge = ({ category }) => (
-  <span className={`text-xs font-mono px-2 py-0.5 rounded border ${CATEGORY_COLORS[category] || 'text-gray-400 border-gray-700'}`}>
-    {category}
-  </span>
-);
-
-// ── Variable editor sub-component ─────────────────────────────────────────────
+// ── VariableEditor ────────────────────────────────────────────────────────────
 function VariableEditor({ variables, onChange }) {
-  const add = () =>
-    onChange([...variables, { name: '', type: 'number', min: 1, max: 10, options: [] }]);
-
-  const update = (i, field, value) => {
-    const next = variables.map((v, idx) =>
-      idx === i ? { ...v, [field]: value } : v
-    );
+  const add = () => onChange([...variables, { name:'X', type:'number', min:1, max:10, options:[] }]);
+  const remove = i => onChange(variables.filter((_,j) => j !== i));
+  const update = (i, field, val) => {
+    const next = [...variables];
+    next[i] = { ...next[i], [field]: val };
     onChange(next);
   };
 
-  const remove = (i) => onChange(variables.filter((_, idx) => idx !== i));
-
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
         <label className="font-mono text-xs text-gray-500 uppercase tracking-wider">
           Variables ({variables.length})
         </label>
-        <button
-          type="button"
-          onClick={add}
-          className="text-xs font-mono text-green-500 hover:text-green-400 border border-green-800/50 px-2 py-0.5 rounded"
-        >
-          + ADD
-        </button>
+        {variables.length < 6 && (
+          <button type="button" onClick={add}
+            className="text-xs font-mono text-green-500 border border-green-800/50 px-2 py-0.5 rounded hover:bg-green-950/30">
+            + ADD
+          </button>
+        )}
       </div>
       {variables.map((v, i) => (
-        <div key={i} className="bg-void-700/50 border border-white/5 rounded p-3 space-y-2">
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="font-mono text-[10px] text-gray-600">Name</label>
-              <input
-                value={v.name}
-                onChange={(e) => update(i, 'name', e.target.value.toUpperCase())}
-                placeholder="X"
-                className="input-field text-sm py-1.5 mt-0.5"
-              />
-            </div>
-            <div>
-              <label className="font-mono text-[10px] text-gray-600">Type</label>
-              <select
-                value={v.type}
-                onChange={(e) => update(i, 'type', e.target.value)}
-                className="input-field text-sm py-1.5 mt-0.5"
-              >
-                {['number', 'letter', 'choice', 'symbol'].map((t) => (
-                  <option key={t} value={t}>{t}</option>
-                ))}
-              </select>
-            </div>
+        <div key={i} className="grid grid-cols-5 gap-2 items-end">
+          <div>
+            <span className="font-mono text-[10px] text-gray-600 block mb-1">NAME</span>
+            <input value={v.name} onChange={e => update(i,'name',e.target.value.toUpperCase())}
+              className="input-field text-sm uppercase w-full" maxLength={4}/>
           </div>
-          {v.type === 'number' && (
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="font-mono text-[10px] text-gray-600">Min</label>
-                <input type="number" value={v.min} onChange={(e) => update(i, 'min', +e.target.value)}
-                  className="input-field text-sm py-1.5 mt-0.5" />
-              </div>
-              <div>
-                <label className="font-mono text-[10px] text-gray-600">Max</label>
-                <input type="number" value={v.max} onChange={(e) => update(i, 'max', +e.target.value)}
-                  className="input-field text-sm py-1.5 mt-0.5" />
-              </div>
-            </div>
-          )}
-          {(v.type === 'choice' || v.type === 'word') && (
+          <div>
+            <span className="font-mono text-[10px] text-gray-600 block mb-1">TYPE</span>
+            <select value={v.type} onChange={e => update(i,'type',e.target.value)} className="input-field text-sm w-full">
+              <option value="number">number</option>
+              <option value="letter">letter</option>
+              <option value="choice">choice</option>
+              <option value="symbol">symbol</option>
+            </select>
+          </div>
+          {(v.type === 'number') && <>
             <div>
-              <label className="font-mono text-[10px] text-gray-600">Options (comma-separated)</label>
-              <input
-                value={(v.options || []).join(', ')}
-                onChange={(e) => update(i, 'options', e.target.value.split(',').map((s) => s.trim()).filter(Boolean))}
-                placeholder="RED, BLUE, GREEN"
-                className="input-field text-sm py-1.5 mt-0.5"
-              />
+              <span className="font-mono text-[10px] text-gray-600 block mb-1">MIN</span>
+              <input type="number" value={v.min} onChange={e => update(i,'min',parseInt(e.target.value)||0)}
+                className="input-field text-sm w-full"/>
+            </div>
+            <div>
+              <span className="font-mono text-[10px] text-gray-600 block mb-1">MAX</span>
+              <input type="number" value={v.max} onChange={e => update(i,'max',parseInt(e.target.value)||10)}
+                className="input-field text-sm w-full"/>
+            </div>
+          </>}
+          {v.type === 'choice' && (
+            <div className="col-span-2">
+              <span className="font-mono text-[10px] text-gray-600 block mb-1">OPTIONS (comma-sep)</span>
+              <input value={(v.options||[]).join(',')}
+                onChange={e => update(i,'options',e.target.value.split(',').map(s=>s.trim()).filter(Boolean))}
+                className="input-field text-sm w-full" placeholder="APPLE,BRIDGE,CLOCK"/>
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => remove(i)}
-            className="text-xs font-mono text-red-500/70 hover:text-red-400"
-          >
-            ✕ Remove
+          <button type="button" onClick={() => remove(i)}
+            className="font-mono text-xs text-red-500/60 hover:text-red-400 border border-transparent hover:border-red-900/50 px-2 py-1.5 rounded">
+            ✕
           </button>
         </div>
       ))}
@@ -149,240 +99,138 @@ function VariableEditor({ variables, onChange }) {
   );
 }
 
-// ── Clue Form (shared by Create and Edit) ─────────────────────────────────────
-function ClueForm({ initial, onSubmit, onCancel, submitLabel = 'SAVE' }) {
+// ── ClueForm ──────────────────────────────────────────────────────────────────
+function ClueForm({ initial, onSave, onCancel, saving }) {
   const [form, setForm] = useState(initial || EMPTY_CLUE);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!form.template.trim() || !form.answerRule.trim()) {
-      setError('Template and Answer Rule are required');
-      return;
-    }
-    setSaving(true);
-    setError('');
-    try {
-      await onSubmit(form);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
-      {/* Category + Difficulty row */}
+    <div className="space-y-5">
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">Category</label>
-          <select value={form.category} onChange={(e) => set('category', e.target.value)}
-            className="input-field">
-            {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+          <select value={form.category} onChange={e => set('category', e.target.value)} className="input-field w-full">
+            {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
         <div>
           <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
-            Difficulty ({form.difficulty}/5)
+            Difficulty (1/10)
           </label>
-          <input type="range" min={1} max={5} value={form.difficulty}
-            onChange={(e) => set('difficulty', +e.target.value)}
-            className="w-full mt-2 accent-orange-400" />
+          <input type="range" min={1} max={10} value={form.difficulty}
+            onChange={e => set('difficulty', parseInt(e.target.value))}
+            className="w-full accent-green-500 mt-2"/>
+          <span className="font-mono text-xs text-gray-500">{form.difficulty}/10</span>
         </div>
       </div>
 
-      {/* Template */}
       <div>
         <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
-          Template <span className="text-gray-700 normal-case tracking-normal">— use {`{X}`} for variables</span>
+          Template — use {'{X}'} for variables
         </label>
-        <textarea
-          value={form.template}
-          onChange={(e) => set('template', e.target.value)}
-          rows={2}
-          placeholder='Numbers divisible by {X} survive. The code is {Y}.'
-          className="input-field resize-none"
-          required
-        />
+        <textarea value={form.template} onChange={e => set('template', e.target.value)}
+          placeholder="Only even numbers survive. The code is {X}."
+          rows={3} className="input-field w-full font-mono text-sm"/>
       </div>
 
-      {/* Answer Rule */}
       <div>
         <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
-          Answer Rule <span className="text-gray-700 normal-case tracking-normal">— e.g. divisible_by:{`{X}:{Y}`}</span>
+          Answer Rule — e.g. even:{'{X}'}
         </label>
-        <input
-          value={form.answerRule}
-          onChange={(e) => set('answerRule', e.target.value)}
-          placeholder="divisible_by:{X}:{Y}"
-          className="input-field font-mono"
-          required
-        />
+        <input value={form.answerRule} onChange={e => set('answerRule', e.target.value)}
+          placeholder="even:{X}" className="input-field w-full font-mono"/>
       </div>
 
-      {/* Flavor Text */}
       <div>
-        <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">Flavor Text (optional)</label>
-        <input
-          value={form.flavorText}
-          onChange={(e) => set('flavorText', e.target.value)}
+        <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+          Flavor Text (optional)
+        </label>
+        <input value={form.flavorText} onChange={e => set('flavorText', e.target.value)}
           placeholder="Mathematical equations cover the walls."
-          className="input-field"
-        />
+          className="input-field w-full"/>
       </div>
 
       {/* Hints */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <label className="font-mono text-xs text-gray-500 uppercase tracking-wider">
-            Hints{' '}
-            <span className="text-gray-700 normal-case tracking-normal font-body">
-              — revealed progressively during puzzle phase
+            Hints <span className="text-gray-700 normal-case tracking-normal font-body text-xs">
+              — D1-3 get 2, D4-6 get 1, D7-10 get 0
             </span>
           </label>
-          {(form.hints || []).length < 2 && (
-            <button
-              type="button"
-              onClick={() => set('hints', [...(form.hints || []), ''])}
-              className="text-xs font-mono text-green-500 hover:text-green-400 border border-green-800/50 px-2 py-0.5 rounded"
-            >
+          {(form.hints||[]).length < 2 && form.difficulty <= 6 && (
+            <button type="button" onClick={() => set('hints',[...(form.hints||[]),''])}
+              className="text-xs font-mono text-green-500 border border-green-800/50 px-2 py-0.5 rounded">
               + ADD HINT
             </button>
           )}
         </div>
-
-        {(form.hints || []).length === 0 && (
-          <p className="font-mono text-[10px] text-gray-700">
-            No hints. Players receive no guidance during the puzzle phase.
-          </p>
-        )}
-
-        {(form.hints || []).map((hint, i) => (
-          <div key={i} className="flex gap-2 items-start">
+        {(form.hints||[]).map((hint,i) => (
+          <div key={i} className="flex gap-2">
             <div className="flex-1 relative">
-              <div className="absolute left-3 top-3 flex items-center gap-1.5 pointer-events-none">
-                <span className={`w-2 h-2 rounded-full ${i === 0 ? 'bg-yellow-500' : 'bg-orange-500'}`} />
+              <div className="absolute left-3 top-2.5 flex items-center gap-1.5 pointer-events-none">
+                <span className={`w-2 h-2 rounded-full ${i===0?'bg-yellow-500':'bg-orange-500'}`}/>
                 <span className="font-mono text-[10px] text-gray-600">
-                  {i === 0 ? 'Shown at ~67% time' : 'Shown at ~33% time'}
+                  {i===0?'Hint 1 — at 67% time':'Hint 2 — at 33% time'}
                 </span>
               </div>
-              <input
-                value={hint}
-                onChange={(e) => {
-                  const next = [...(form.hints || [])];
-                  next[i] = e.target.value;
-                  set('hints', next);
-                }}
-                placeholder={
-                  i === 0
-                    ? 'Vague nudge — e.g. "Think about divisibility rules."'
-                    : 'Stronger nudge — e.g. "Check if the remainder is zero."'
-                }
-                className="input-field text-sm pt-8 pb-2"
-              />
+              <input value={hint}
+                onChange={e => { const n=[...(form.hints||[])]; n[i]=e.target.value; set('hints',n); }}
+                placeholder={i===0?'Vague nudge…':'Stronger nudge (no answer)…'}
+                className="input-field w-full pt-7 pb-2 text-sm"/>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                const next = (form.hints || []).filter((_, idx) => idx !== i);
-                set('hints', next);
-              }}
-              className="mt-2 text-xs font-mono text-red-500/60 hover:text-red-400 border border-transparent hover:border-red-900 px-2 py-1 rounded"
-            >
+            <button type="button" onClick={() => set('hints',(form.hints||[]).filter((_,j)=>j!==i))}
+              className="text-xs font-mono text-red-500/60 hover:text-red-400 border border-transparent hover:border-red-900 px-2 rounded">
               ✕
             </button>
           </div>
         ))}
-
-        {(form.hints || []).length > 0 && (
-          <p className="font-mono text-[10px] text-gray-700 mt-1">
-            💡 Good hints guide thinking without giving the answer away.
-          </p>
-        )}
       </div>
 
-      {/* Variables */}
-      <VariableEditor variables={form.variables || []} onChange={(v) => set('variables', v)} />
-
-      {error && (
-        <div className="bg-red-900/30 border border-red-700/50 rounded px-3 py-2 text-red-400 text-sm">
-          {error}
-        </div>
-      )}
+      <VariableEditor variables={form.variables||[]} onChange={v => set('variables',v)}/>
 
       <div className="flex gap-3 pt-2">
-        <button type="submit" disabled={saving} className="btn-primary flex-1">
-          {saving ? (
-            <span className="flex items-center justify-center gap-2">
-              <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-              SAVING…
-            </span>
-          ) : submitLabel}
+        <button type="button" onClick={() => onSave(form)} disabled={saving || !form.template || !form.answerRule}
+          className="btn-primary flex-1 disabled:opacity-50">
+          {saving ? 'SAVING…' : initial?._id ? 'SAVE CHANGES' : 'CREATE CLUE'}
         </button>
-        {onCancel && (
-          <button type="button" onClick={onCancel} className="btn-ghost">CANCEL</button>
-        )}
+        <button type="button" onClick={onCancel}
+          className="btn-secondary px-6">
+          CANCEL
+        </button>
       </div>
-    </form>
+    </div>
   );
 }
 
-// ── Bulk Import Panel ──────────────────────────────────────────────────────────
-function BulkImport({ token, onSuccess }) {
+// ── BulkImport ────────────────────────────────────────────────────────────────
+function BulkImport({ onDone }) {
   const [json, setJson] = useState('');
-  const [status, setStatus] = useState(null); // null | {ok, message}
+  const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
   const EXAMPLE = JSON.stringify({
-    clues: [
-      {
-        category: 'number',
-        template: 'Only even numbers survive. The code is {X}.',
-        answerRule: 'even',
-        difficulty: 1,
-        flavorText: 'Number sequences cover the walls.',
-        hints: [
-          'Even numbers are divisible by 2 with no remainder.',
-          'Check the last digit — 0, 2, 4, 6, or 8 means even.',
-        ],
-        variables: [{ name: 'X', type: 'number', min: 100, max: 999 }],
-      },
-      {
-        category: 'logic',
-        template: 'If it rains, the ground is wet. The ground is dry. Did it rain?',
-        answerRule: 'modus_tollens:no',
-        difficulty: 3,
-        flavorText: 'A weather station with contradictory readings.',
-        hints: [
-          'This is cause-and-effect: if the cause happened, the effect must follow.',
-          'The effect (wet ground) did NOT happen — so can the cause have occurred?',
-        ],
-        variables: [],
-      },
-    ],
+    clues: [{
+      category:'number', template:'Only even numbers survive. The code is {X}.', answerRule:'even:{X}',
+      difficulty:1, flavorText:'Number sequences cover the walls.',
+      hints:['Even = divisible by 2 with no remainder.','Check last digit: 0,2,4,6,8 = even.'],
+      variables:[{name:'X',type:'number',min:100,max:999}],
+    }],
   }, null, 2);
 
   const handleImport = async () => {
-    setLoading(true);
-    setStatus(null);
+    setLoading(true); setError(''); setResult(null);
     try {
       const parsed = JSON.parse(json);
-      const res = await fetch(`${API}/clues/bulk`, {
+      const data = await apiJSON('/clues/bulk', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(parsed),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Import failed');
-      setStatus({ ok: true, message: `✅ Imported ${data.inserted} clue(s) successfully` });
-      setJson('');
-      onSuccess();
+      setResult(data);
+      onDone?.();
     } catch (err) {
-      setStatus({ ok: false, message: `❌ ${err.message}` });
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -390,452 +238,377 @@ function BulkImport({ token, onSuccess }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="font-mono text-xs text-gray-500">Paste a JSON object with a "clues" array</p>
-        <button
-          onClick={() => setJson(EXAMPLE)}
-          className="text-xs font-mono text-green-500/70 hover:text-green-400 border border-green-900 px-2 py-0.5 rounded"
-        >
-          LOAD EXAMPLE
-        </button>
-      </div>
-
-      <textarea
-        value={json}
-        onChange={(e) => setJson(e.target.value)}
-        rows={14}
-        placeholder={EXAMPLE}
-        spellCheck={false}
-        className="input-field font-mono text-xs resize-none leading-relaxed"
-      />
-
-      {status && (
-        <div className={`rounded px-3 py-2 text-sm font-body border ${
-          status.ok
-            ? 'bg-green-900/30 border-green-700/50 text-green-300'
-            : 'bg-red-900/30 border-red-700/50 text-red-400'
-        }`}>
-          {status.message}
+      <p className="font-mono text-xs text-gray-500">
+        Paste a JSON object with a <code className="text-green-400">clues</code> array.
+        Duplicate templates are automatically skipped.
+      </p>
+      <textarea value={json} onChange={e => setJson(e.target.value)} rows={14}
+        placeholder={EXAMPLE} className="input-field w-full font-mono text-xs"/>
+      {error && <p className="font-mono text-xs text-red-400">⚠ {error}</p>}
+      {result && (
+        <div className="font-mono text-xs space-y-1">
+          <p className="text-green-400">✅ {result.inserted} clues added</p>
+          {result.skipped > 0 && <p className="text-yellow-500">⏭ {result.skipped} duplicates skipped</p>}
         </div>
       )}
-
-      <button
-        onClick={handleImport}
-        disabled={loading || !json.trim()}
-        className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed"
-      >
+      <button onClick={handleImport} disabled={!json.trim() || loading}
+        className="btn-primary w-full disabled:opacity-50">
         {loading ? 'IMPORTING…' : '⬆ IMPORT CLUES'}
       </button>
     </div>
   );
 }
 
-// ── Main Admin Page ────────────────────────────────────────────────────────────
+// ── Main AdminPage ─────────────────────────────────────────────────────────────
 export default function AdminPage() {
-  const { player, token } = useAuthStore();
   const navigate = useNavigate();
+  const { player } = useAuthStore();
 
-  // Access guard
+  const [stats, setStats]         = useState(null);   // from /api/clues/stats
+  const [clues, setClues]         = useState([]);
+  const [total, setTotal]         = useState(0);
+  const [page, setPage]           = useState(1);
+  const [hasMore, setHasMore]     = useState(false);
+  const [loadingClues, setLoadingClues] = useState(true);
+  const [loadingStats, setLoadingStats] = useState(true);
+
+  const [tab, setTab]             = useState('clues'); // 'clues' | 'create' | 'bulk'
+  const [editTarget, setEditTarget] = useState(null);
+
+  const [filterCat,   setFilterCat]   = useState('');
+  const [filterDiff,  setFilterDiff]  = useState('');
+  const [search,      setSearch]      = useState('');
+  const [showInactive, setShowInactive] = useState(true);
+
+  const [saving, setSaving]       = useState(false);
+  const [actionMsg, setActionMsg] = useState('');
+
+  const PAGE_SIZE = 50;
+
+  // ── Redirect non-admins ───────────────────────────────────────────────────
   useEffect(() => {
     if (player && !player.isAdmin) navigate('/lobby');
   }, [player]);
 
-  const [clues, setClues] = useState([]);
-  const [stats, setStats] = useState({ total: 0, active: 0, inactive: 0, byCategory: {} });
-  const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState({ category: '', difficulty: '', search: '', includeInactive: true });
-  const [activeTab, setActiveTab] = useState('clues'); // clues | create | bulk
-  const [editingId, setEditingId] = useState(null);
-  const [toast, setToast] = useState(null);
-
-  const showToast = (msg, type = 'success') => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3500);
-  };
-
-  const authHeaders = { Authorization: `Bearer ${token}` };
-
-  // ── Fetch clues ──────────────────────────────────────────────────────────────
-  const fetchClues = useCallback(async () => {
-    setLoading(true);
+  // ── Load stats from server (accurate, all clues) ──────────────────────────
+  const fetchStats = useCallback(async () => {
+    setLoadingStats(true);
     try {
-      const params = new URLSearchParams();
-      if (filters.category) params.set('category', filters.category);
-      if (filters.difficulty) params.set('difficulty', filters.difficulty);
-      if (filters.search) params.set('search', filters.search);
-      if (filters.includeInactive) params.set('includeInactive', '1');
-
-      const res = await fetch(`${API}/clues?${params}`, { headers: authHeaders });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-
-      setClues(data.clues || []);
-
-      // Compute stats
-      const allRes = await fetch(`${API}/clues?includeInactive=1`, { headers: authHeaders });
-      const allData = await allRes.json();
-      const all = allData.clues || [];
-      const byCategory = {};
-      CATEGORIES.forEach((c) => { byCategory[c] = all.filter((cl) => cl.category === c).length; });
-      setStats({
-        total: all.length,
-        active: all.filter((c) => c.isActive).length,
-        inactive: all.filter((c) => !c.isActive).length,
-        byCategory,
+      const data = await apiJSON('/clues/stats');
+      // data.stats = [{ _id: { category, difficulty, isActive }, count }]
+      // Build human-readable summary
+      const summary = { total: 0, active: 0, inactive: 0, byCategory: {} };
+      (data.stats || []).forEach(s => {
+        summary.total += s.count;
+        if (s._id.isActive) summary.active += s.count;
+        else summary.inactive += s.count;
+        const cat = s._id.category;
+        summary.byCategory[cat] = (summary.byCategory[cat] || 0) + s.count;
       });
+      setStats(summary);
     } catch (err) {
-      showToast(err.message, 'error');
+      console.error('Stats error:', err.message);
     } finally {
-      setLoading(false);
+      setLoadingStats(false);
     }
-  }, [filters]);
+  }, []);
 
-  useEffect(() => { fetchClues(); }, [fetchClues]);
+  // ── Load paginated clue list ───────────────────────────────────────────────
+  const fetchClues = useCallback(async (resetPage = false) => {
+    const targetPage = resetPage ? 1 : page;
+    if (resetPage) setPage(1);
+    setLoadingClues(true);
+    try {
+      const params = new URLSearchParams({
+        page: targetPage,
+        limit: PAGE_SIZE,
+        ...(filterCat   && { category: filterCat }),
+        ...(filterDiff  && { difficulty: filterDiff }),
+        ...(search      && { search }),
+        ...(showInactive && { includeInactive: '1' }),
+      });
+      const data = await apiJSON(`/clues?${params}`);
+      if (resetPage) {
+        setClues(data.clues || []);
+      } else {
+        setClues(prev => targetPage === 1 ? (data.clues || []) : [...prev, ...(data.clues || [])]);
+      }
+      setTotal(data.total || 0);
+      setHasMore((data.page || 1) < (data.pages || 1));
+    } catch (err) {
+      console.error('Clues error:', err.message);
+    } finally {
+      setLoadingClues(false);
+    }
+  }, [filterCat, filterDiff, search, showInactive, page]);
 
-  // ── Actions ──────────────────────────────────────────────────────────────────
-  const createClue = async (form) => {
-    const res = await fetch(`${API}/clues`, {
-      method: 'POST',
-      headers: { ...authHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    showToast('Clue created!');
-    setActiveTab('clues');
-    fetchClues();
+  // ── Initial load ───────────────────────────────────────────────────────────
+  useEffect(() => { fetchStats(); }, []);
+  useEffect(() => { fetchClues(true); }, [filterCat, filterDiff, search, showInactive]);
+
+  // ── Actions ────────────────────────────────────────────────────────────────
+  const handleSave = async (form) => {
+    setSaving(true);
+    try {
+      if (editTarget?._id) {
+        await apiJSON(`/clues/${editTarget._id}`, { method:'PUT', body: JSON.stringify(form) });
+        setActionMsg('✅ Clue updated');
+      } else {
+        await apiJSON('/clues', { method:'POST', body: JSON.stringify(form) });
+        setActionMsg('✅ Clue created');
+      }
+      setTab('clues');
+      setEditTarget(null);
+      fetchStats();
+      fetchClues(true);
+    } catch (err) {
+      setActionMsg(`❌ ${err.message}`);
+    } finally {
+      setSaving(false);
+      setTimeout(() => setActionMsg(''), 4000);
+    }
   };
 
-  const updateClue = async (id, form) => {
-    const res = await fetch(`${API}/clues/${id}`, {
-      method: 'PUT',
-      headers: { ...authHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    showToast('Clue updated!');
-    setEditingId(null);
-    fetchClues();
+  const handleToggle = async (clue) => {
+    try {
+      const data = await apiJSON(`/clues/${clue._id}/toggle`, { method:'PATCH' });
+      setClues(prev => prev.map(c => c._id === clue._id ? data.clue : c));
+      fetchStats();
+    } catch (err) {
+      setActionMsg(`❌ ${err.message}`);
+      setTimeout(() => setActionMsg(''), 3000);
+    }
   };
 
-  const toggleClue = async (id) => {
-    const res = await fetch(`${API}/clues/${id}/toggle`, {
-      method: 'PATCH',
-      headers: authHeaders,
-    });
-    const data = await res.json();
-    if (!res.ok) return showToast(data.error, 'error');
-    showToast(`Clue ${data.clue.isActive ? 'enabled' : 'disabled'}`);
-    fetchClues();
+  const handleDelete = async (clue) => {
+    if (!window.confirm(`Delete "${clue.template.slice(0,60)}…"?`)) return;
+    try {
+      await apiJSON(`/clues/${clue._id}`, { method:'DELETE' });
+      setClues(prev => prev.filter(c => c._id !== clue._id));
+      setTotal(t => t - 1);
+      fetchStats();
+    } catch (err) {
+      setActionMsg(`❌ ${err.message}`);
+      setTimeout(() => setActionMsg(''), 3000);
+    }
   };
 
-  const deleteClue = async (id, template) => {
-    if (!window.confirm(`Delete clue?\n"${template.slice(0, 60)}…"`)) return;
-    const res = await fetch(`${API}/clues/${id}`, {
-      method: 'DELETE',
-      headers: authHeaders,
-    });
-    if (!res.ok) return showToast('Delete failed', 'error');
-    showToast('Clue deleted');
-    fetchClues();
+  const loadMore = () => {
+    const next = page + 1;
+    setPage(next);
+    fetchClues(false);
   };
 
-  const editingClue = editingId ? clues.find((c) => c._id === editingId) : null;
+  // ── Stat card ──────────────────────────────────────────────────────────────
+  const StatCard = ({ label, value, color = 'text-green-400' }) => (
+    <div className="glass-card p-4 text-center">
+      <p className={`font-display text-2xl font-bold ${color}`}>
+        {loadingStats ? '—' : (value ?? 0)}
+      </p>
+      <p className="font-mono text-[10px] text-gray-600 uppercase tracking-widest mt-1">{label}</p>
+    </div>
+  );
 
-  if (!player?.isAdmin) return null;
-
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-void-900 text-white">
-      {/* Grid bg */}
-      <div className="fixed inset-0 opacity-15 pointer-events-none"
-        style={{
-          backgroundImage: 'linear-gradient(rgba(0,255,136,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,136,0.05) 1px, transparent 1px)',
-          backgroundSize: '40px 40px',
-        }}
-      />
+    <div className="min-h-screen bg-gray-950 text-white p-6">
+      <div className="max-w-6xl mx-auto space-y-6">
 
-      {/* Toast */}
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            initial={{ opacity: 0, y: -16 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -16 }}
-            className={`fixed top-4 right-4 z-[9999] px-4 py-3 rounded-lg border backdrop-blur-sm font-body text-sm shadow-xl ${
-              toast.type === 'error'
-                ? 'bg-red-900/80 border-red-600/50 text-red-200'
-                : 'bg-green-900/80 border-green-600/50 text-green-200'
-            }`}
-          >
-            {toast.msg}
-          </motion.div>
+        {/* Header */}
+        <div>
+          <div className="flex items-center gap-2 text-gray-700 font-mono text-xs mb-2">
+            <button onClick={() => navigate('/lobby')} className="hover:text-green-400">← LOBBY</button>
+            <span>/</span>
+            <span className="text-gray-500">ADMIN</span>
+          </div>
+          <h1 className="font-display text-4xl font-bold text-green-400 tracking-wider uppercase">
+            Admin Panel
+          </h1>
+          <p className="font-mono text-sm text-gray-500 mt-1">
+            Signed in as <span className="text-green-400">{player?.username}</span>
+            <span className="ml-2 text-xs text-yellow-400 border border-yellow-700 px-1 rounded">ADMIN</span>
+          </p>
+        </div>
+
+        {/* Stats — from server-side aggregation, accurate for ALL clues */}
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
+          <StatCard label="Total"    value={stats?.total}    color="text-green-400"/>
+          <StatCard label="Active"   value={stats?.active}   color="text-green-400"/>
+          <StatCard label="Inactive" value={stats?.inactive} color="text-red-400"/>
+          {ALL_CATEGORIES.slice(0,7).map(cat => (
+            <StatCard key={cat} label={cat}
+              value={stats?.byCategory?.[cat]}
+              color={stats?.byCategory?.[cat] > 0 ? 'text-blue-400' : 'text-gray-700'}/>
+          ))}
+        </div>
+        {/* New categories row */}
+        <div className="grid grid-cols-4 sm:grid-cols-7 gap-3">
+          {ALL_CATEGORIES.slice(7).map(cat => (
+            <StatCard key={cat} label={cat}
+              value={stats?.byCategory?.[cat]}
+              color={stats?.byCategory?.[cat] > 0 ? 'text-purple-400' : 'text-gray-700'}/>
+          ))}
+        </div>
+
+        {actionMsg && (
+          <p className={`font-mono text-sm ${actionMsg.startsWith('✅')?'text-green-400':'text-red-400'}`}>
+            {actionMsg}
+          </p>
         )}
-      </AnimatePresence>
 
-      <div className="relative z-10 max-w-7xl mx-auto px-4 py-8">
-
-        {/* ── Header ── */}
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <div className="flex items-center gap-3 mb-1">
-              <Link to="/lobby" className="font-mono text-xs text-green-500/60 hover:text-green-400">
-                ← LOBBY
-              </Link>
-              <span className="font-mono text-xs text-gray-700">/</span>
-              <span className="font-mono text-xs text-gray-600">ADMIN</span>
-            </div>
-            <h1 className="font-display text-5xl tracking-wider neon-text">ADMIN PANEL</h1>
-            <p className="font-mono text-xs text-gray-600 mt-1">
-              Signed in as <span className="text-green-500">{player?.username}</span>
-              <span className="ml-2 px-1.5 py-0.5 bg-yellow-900/40 border border-yellow-700/50 rounded text-yellow-400 text-[10px]">
-                ADMIN
-              </span>
-            </p>
-          </div>
+        {/* Tabs */}
+        <div className="flex gap-3">
+          <button onClick={() => { setTab('clues'); setEditTarget(null); }}
+            className={`font-mono text-sm px-4 py-2 rounded border ${tab==='clues'?'bg-green-900/30 border-green-700 text-green-400':'border-gray-800 text-gray-600 hover:text-gray-400'}`}>
+            CLUES ({total})
+          </button>
+          <button onClick={() => { setTab('create'); setEditTarget(null); }}
+            className={`font-mono text-sm px-4 py-2 rounded border ${tab==='create'?'bg-green-900/30 border-green-700 text-green-400':'border-gray-800 text-gray-600 hover:text-gray-400'}`}>
+            + CREATE
+          </button>
+          <button onClick={() => setTab('bulk')}
+            className={`font-mono text-sm px-4 py-2 rounded border ${tab==='bulk'?'bg-green-900/30 border-green-700 text-green-400':'border-gray-800 text-gray-600 hover:text-gray-400'}`}>
+            ⬆ BULK IMPORT
+          </button>
         </div>
 
-        {/* ── Stats strip ── */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-9 gap-3 mb-8">
-          <div className="glass-card p-3 text-center col-span-1">
-            <div className="font-display text-2xl neon-text">{stats.total}</div>
-            <div className="font-mono text-[10px] text-gray-600">TOTAL</div>
+        {/* Tab panels */}
+        {tab === 'bulk' && (
+          <div className="glass-card p-6">
+            <h2 className="font-display text-lg font-bold text-white mb-4">Bulk Import Clues</h2>
+            <BulkImport onDone={() => { fetchStats(); fetchClues(true); setTab('clues'); }}/>
           </div>
-          <div className="glass-card p-3 text-center col-span-1">
-            <div className="font-display text-2xl text-green-400">{stats.active}</div>
-            <div className="font-mono text-[10px] text-gray-600">ACTIVE</div>
+        )}
+
+        {(tab === 'create' || editTarget) && (
+          <div className="glass-card p-6">
+            <h2 className="font-display text-lg font-bold text-white mb-6">
+              {editTarget ? 'EDIT CLUE' : 'CREATE NEW CLUE'}
+            </h2>
+            <ClueForm
+              initial={editTarget || EMPTY_CLUE}
+              onSave={handleSave}
+              onCancel={() => { setTab('clues'); setEditTarget(null); }}
+              saving={saving}
+            />
           </div>
-          <div className="glass-card p-3 text-center col-span-1">
-            <div className="font-display text-2xl text-red-400">{stats.inactive}</div>
-            <div className="font-mono text-[10px] text-gray-600">INACTIVE</div>
-          </div>
-          {CATEGORIES.map((cat) => (
-            <div key={cat} className="glass-card p-3 text-center col-span-1">
-              <div className={`font-display text-xl ${CATEGORY_COLORS[cat]?.split(' ')[0] || 'text-gray-400'}`}>
-                {stats.byCategory[cat] || 0}
+        )}
+
+        {tab === 'clues' && !editTarget && (
+          <div className="space-y-4">
+            {/* Filters */}
+            <div className="glass-card p-4 grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
+              <div>
+                <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">Search</label>
+                <input value={search} onChange={e => setSearch(e.target.value)}
+                  placeholder="Search templates…" className="input-field text-sm w-full"/>
               </div>
-              <div className="font-mono text-[10px] text-gray-600 truncate">{cat.toUpperCase()}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* ── Tabs ── */}
-        <div className="flex gap-1 mb-6 bg-void-800 p-1 rounded-lg w-fit">
-          {[
-            { id: 'clues', label: `CLUES (${clues.length})` },
-            { id: 'create', label: '+ CREATE' },
-            { id: 'bulk', label: '⬆ BULK IMPORT' },
-          ].map((t) => (
-            <button
-              key={t.id}
-              onClick={() => { setActiveTab(t.id); setEditingId(null); }}
-              className={`font-display tracking-wider px-5 py-2 rounded text-sm transition-all ${
-                activeTab === t.id
-                  ? 'bg-green-800/50 text-green-300 border border-green-700/50'
-                  : 'text-gray-500 hover:text-gray-300'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-
-        <AnimatePresence mode="wait">
-
-          {/* ─── CLUES TAB ────────────────────────────────────────────────── */}
-          {activeTab === 'clues' && (
-            <motion.div key="clues" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-
-              {/* Filters */}
-              <div className="glass-card p-4 mb-4 grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
-                <div>
-                  <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">Search</label>
-                  <input
-                    value={filters.search}
-                    onChange={(e) => setFilters((f) => ({ ...f, search: e.target.value }))}
-                    placeholder="Search templates…"
-                    className="input-field text-sm py-1.5"
-                  />
-                </div>
-                <div>
-                  <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">Category</label>
-                  <select
-                    value={filters.category}
-                    onChange={(e) => setFilters((f) => ({ ...f, category: e.target.value }))}
-                    className="input-field text-sm py-1.5"
-                  >
-                    <option value="">All</option>
-                    {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">Difficulty</label>
-                  <select
-                    value={filters.difficulty}
-                    onChange={(e) => setFilters((f) => ({ ...f, difficulty: e.target.value }))}
-                    className="input-field text-sm py-1.5"
-                  >
-                    <option value="">All</option>
-                    {DIFFICULTIES.map((d) => <option key={d} value={d}>{'★'.repeat(d)}</option>)}
-                  </select>
-                </div>
-                <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={filters.includeInactive}
-                      onChange={(e) => setFilters((f) => ({ ...f, includeInactive: e.target.checked }))}
-                      className="accent-green-500 w-4 h-4"
-                    />
-                    <span className="font-mono text-xs text-gray-500">Show inactive</span>
-                  </label>
-                  <button
-                    onClick={() => setFilters({ category: '', difficulty: '', search: '', includeInactive: true })}
-                    className="font-mono text-xs text-gray-600 hover:text-gray-400"
-                  >
-                    RESET
-                  </button>
-                </div>
+              <div>
+                <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">Category</label>
+                <select value={filterCat} onChange={e => setFilterCat(e.target.value)} className="input-field text-sm w-full">
+                  <option value="">All</option>
+                  {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
+              <div>
+                <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">Difficulty</label>
+                <select value={filterDiff} onChange={e => setFilterDiff(e.target.value)} className="input-field text-sm w-full">
+                  <option value="">All</option>
+                  {[1,2,3,4,5,6,7,8,9,10].map(d => <option key={d} value={d}>D{d}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="inactive" checked={showInactive}
+                  onChange={e => setShowInactive(e.target.checked)} className="accent-green-500"/>
+                <label htmlFor="inactive" className="font-mono text-xs text-gray-500">Show inactive</label>
+                <button onClick={() => { setSearch(''); setFilterCat(''); setFilterDiff(''); setShowInactive(true); }}
+                  className="font-mono text-xs text-gray-700 hover:text-gray-400 ml-2">RESET</button>
+              </div>
+            </div>
 
-              {/* Loading */}
-              {loading && (
-                <div className="flex justify-center py-16">
-                  <div className="w-8 h-8 border-2 border-green-500/40 border-t-green-500 rounded-full animate-spin" />
-                </div>
-              )}
-
-              {/* Clue list */}
-              {!loading && (
-                <div className="space-y-2">
-                  {clues.length === 0 && (
-                    <div className="glass-card p-12 text-center">
-                      <div className="text-4xl mb-3">🔍</div>
-                      <p className="font-body text-gray-500">No clues match your filters</p>
+            {/* Clue list */}
+            {loadingClues && clues.length === 0 ? (
+              <p className="font-mono text-xs text-gray-700 text-center py-12">Loading clues…</p>
+            ) : clues.length === 0 ? (
+              <p className="font-mono text-xs text-gray-700 text-center py-12">No clues found.</p>
+            ) : (
+              <>
+                {clues.map(clue => (
+                  <motion.div key={clue._id} initial={{ opacity:0 }} animate={{ opacity:1 }}
+                    className="glass-card p-4 flex items-start gap-4">
+                    {/* Category badge */}
+                    <div className="flex-shrink-0 w-24">
+                      <span className="font-mono text-[10px] text-gray-600 uppercase tracking-wider block">
+                        {clue.category}
+                      </span>
+                      <div className="flex gap-0.5 mt-1.5">
+                        {[1,2,3,4,5,6,7,8,9,10].map(d => (
+                          <div key={d} className={`h-1 w-2 rounded-sm ${d <= clue.difficulty ? 'bg-green-500/60' : 'bg-gray-800'}`}/>
+                        ))}
+                      </div>
+                      <span className={`font-mono text-[9px] mt-1 block ${clue.isActive ? 'text-green-500' : 'text-gray-700'}`}>
+                        ● {clue.isActive ? 'ACTIVE' : 'INACTIVE'}
+                      </span>
                     </div>
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-body text-sm text-white leading-snug">
+                        {clue.template.length > 100 ? clue.template.slice(0,100)+'…' : clue.template}
+                      </p>
+                      <p className="font-mono text-[10px] text-gray-600 mt-1">
+                        Rule: <span className="text-gray-500">{clue.answerRule.slice(0,60)}</span>
+                      </p>
+                      {clue.flavorText && (
+                        <p className="font-mono text-[10px] text-gray-700 italic mt-0.5">
+                          {clue.flavorText.slice(0,70)}
+                        </p>
+                      )}
+                      {clue.hints?.length > 0 && (
+                        <p className="font-mono text-[10px] text-yellow-700 mt-0.5">
+                          💡 {clue.hints.length} hint{clue.hints.length>1?'s':''}
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button onClick={() => { setEditTarget(clue); setTab('create'); }}
+                        className="font-mono text-xs border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 px-3 py-1.5 rounded">
+                        EDIT
+                      </button>
+                      <button onClick={() => handleToggle(clue)}
+                        className={`font-mono text-xs border px-3 py-1.5 rounded ${
+                          clue.isActive
+                            ? 'border-red-900/60 text-red-500 hover:bg-red-950/30'
+                            : 'border-green-900/60 text-green-500 hover:bg-green-950/30'}`}>
+                        {clue.isActive ? 'DISABLE' : 'ENABLE'}
+                      </button>
+                      <button onClick={() => handleDelete(clue)}
+                        className="font-mono text-xs text-red-800 hover:text-red-500 px-2 py-1.5">
+                        ✕
+                      </button>
+                    </div>
+                  </motion.div>
+                ))}
+
+                {/* Pagination */}
+                <div className="text-center pt-2">
+                  <p className="font-mono text-xs text-gray-600 mb-3">
+                    Showing {clues.length} of {total} clues
+                  </p>
+                  {hasMore && (
+                    <button onClick={loadMore} disabled={loadingClues}
+                      className="btn-secondary text-sm disabled:opacity-50">
+                      {loadingClues ? 'Loading…' : 'Load More'}
+                    </button>
                   )}
-
-                  {clues.map((clue) => (
-                    <motion.div
-                      key={clue._id}
-                      layout
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className={`glass-card overflow-hidden transition-all ${
-                        !clue.isActive ? 'opacity-50' : ''
-                      }`}
-                    >
-                      {/* Collapsed row */}
-                      {editingId !== clue._id && (
-                        <div className="p-4 flex items-start gap-4">
-                          {/* Left: badges */}
-                          <div className="flex flex-col gap-1.5 flex-shrink-0 w-28">
-                            <Badge category={clue.category} />
-                            <DifficultyDots level={clue.difficulty} />
-                            <span className={`text-[10px] font-mono px-1 py-0.5 rounded w-fit ${
-                              clue.isActive ? 'text-green-500 bg-green-900/30' : 'text-red-500 bg-red-900/30'
-                            }`}>
-                              {clue.isActive ? '● ACTIVE' : '○ OFF'}
-                            </span>
-                          </div>
-
-                          {/* Middle: content */}
-                          <div className="flex-1 min-w-0">
-                            <p className="font-body text-sm text-white leading-relaxed mb-1">
-                              {clue.template}
-                            </p>
-                            <p className="font-mono text-xs text-gray-600">
-                              Rule: <span className="text-gray-500">{clue.answerRule}</span>
-                            </p>
-                            {clue.flavorText && (
-                              <p className="font-body text-xs text-gray-700 italic mt-0.5">{clue.flavorText}</p>
-                            )}
-                            {clue.variables?.length > 0 && (
-                              <div className="flex gap-1 mt-1 flex-wrap">
-                                {clue.variables.map((v, i) => (
-                                  <span key={i} className="font-mono text-[10px] text-cyan-500/70 border border-cyan-900 px-1 rounded">
-                                    {'{' + v.name + '}'} {v.type}
-                                    {v.type === 'number' ? ` [${v.min}-${v.max}]` : ''}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Right: actions */}
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <button
-                              onClick={() => setEditingId(clue._id)}
-                              className="font-mono text-xs text-gray-500 hover:text-white border border-white/10 hover:border-white/30 px-2 py-1 rounded transition-colors"
-                            >
-                              EDIT
-                            </button>
-                            <button
-                              onClick={() => toggleClue(clue._id)}
-                              className={`font-mono text-xs px-2 py-1 rounded border transition-colors ${
-                                clue.isActive
-                                  ? 'text-red-400/70 border-red-900/50 hover:text-red-400 hover:border-red-700'
-                                  : 'text-green-400/70 border-green-900/50 hover:text-green-400 hover:border-green-700'
-                              }`}
-                            >
-                              {clue.isActive ? 'DISABLE' : 'ENABLE'}
-                            </button>
-                            <button
-                              onClick={() => deleteClue(clue._id, clue.template)}
-                              className="font-mono text-xs text-red-600/50 hover:text-red-400 border border-transparent hover:border-red-900 px-2 py-1 rounded transition-colors"
-                            >
-                              ✕
-                            </button>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Expanded edit form */}
-                      {editingId === clue._id && (
-                        <div className="p-5 border-t border-green-700/20">
-                          <h3 className="font-display text-lg tracking-wider text-green-400 mb-4">EDIT CLUE</h3>
-                          <ClueForm
-                            initial={clue}
-                            onSubmit={(form) => updateClue(clue._id, form)}
-                            onCancel={() => setEditingId(null)}
-                            submitLabel="UPDATE CLUE"
-                          />
-                        </div>
-                      )}
-                    </motion.div>
-                  ))}
                 </div>
-              )}
-            </motion.div>
-          )}
+              </>
+            )}
+          </div>
+        )}
 
-          {/* ─── CREATE TAB ───────────────────────────────────────────────── */}
-          {activeTab === 'create' && (
-            <motion.div key="create" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <div className="glass-card p-6 max-w-2xl">
-                <h2 className="font-display text-2xl tracking-wider text-white mb-6">CREATE NEW CLUE</h2>
-                <ClueForm onSubmit={createClue} submitLabel="CREATE CLUE" />
-              </div>
-            </motion.div>
-          )}
-
-          {/* ─── BULK IMPORT TAB ──────────────────────────────────────────── */}
-          {activeTab === 'bulk' && (
-            <motion.div key="bulk" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-              <div className="glass-card p-6 max-w-2xl">
-                <h2 className="font-display text-2xl tracking-wider text-white mb-2">BULK IMPORT</h2>
-                <p className="font-body text-sm text-gray-500 mb-6">
-                  Paste a JSON object containing a <code className="font-mono text-green-400 text-xs bg-green-900/20 px-1 rounded">clues</code> array.
-                  Each clue must have <code className="font-mono text-xs bg-white/5 px-1 rounded">category</code>,{' '}
-                  <code className="font-mono text-xs bg-white/5 px-1 rounded">template</code>, and{' '}
-                  <code className="font-mono text-xs bg-white/5 px-1 rounded">answerRule</code>.
-                </p>
-                <BulkImport token={token} onSuccess={fetchClues} />
-              </div>
-            </motion.div>
-          )}
-
-        </AnimatePresence>
       </div>
     </div>
   );

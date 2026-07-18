@@ -6,16 +6,16 @@
  *
  * The game description stays the same for both states.
  */
-import React from 'react';
-import { useNavigate } from 'react-router-dom';
-import { motion } from 'framer-motion';
-import useAuthStore from '../store/authStore';
+import React from "react";
+import { useNavigate } from "react-router-dom";
+import { motion } from "framer-motion";
+import useAuthStore from "../store/authStore";
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const player      = useAuthStore(s => s.player);
-  const accessToken = useAuthStore(s => s.accessToken);
-  const logout      = useAuthStore(s => s.logout);
+  const player = useAuthStore((s) => s.player);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const logout = useAuthStore((s) => s.logout);
 
   const isLoggedIn = !!(player && accessToken);
 
@@ -26,7 +26,6 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center p-6 relative overflow-hidden">
-
       {/* Background glow */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-green-500/5 rounded-full blur-3xl" />
@@ -34,7 +33,6 @@ export default function HomePage() {
       </div>
 
       <div className="relative z-10 text-center max-w-2xl w-full space-y-10">
-
         {/* Title */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -61,10 +59,25 @@ export default function HomePage() {
           transition={{ delay: 0.3, duration: 0.6 }}
           className="font-body text-gray-500 text-lg leading-relaxed"
         >
-          {isLoggedIn
-            ? <>Welcome back, <span className="text-green-400 font-semibold">{player.username}</span>. Your next escape awaits.</>
-            : <>3–8 players. Multiple rooms. Two doors. Only <span className="text-green-400 font-semibold">logic</span> separates the <span className="text-green-300">living</span> from the <span className="text-red-400">dead</span>.</>
-          }
+          {isLoggedIn ? (
+            <>
+              Welcome back,{" "}
+              <span
+                className="text-green-400 font-semibold cursor-pointer"
+                onClick={() => (window.location = "/profile")}
+              >
+                {player.username}
+              </span>
+              . Your next escape awaits.
+            </>
+          ) : (
+            <>
+              3–8 players. Multiple rooms. Two doors. Only{" "}
+              <span className="text-green-400 font-semibold">logic</span>{" "}
+              separates the <span className="text-green-300">living</span> from
+              the <span className="text-red-400">dead</span>.
+            </>
+          )}
         </motion.p>
 
         {/* Action buttons */}
@@ -78,7 +91,7 @@ export default function HomePage() {
             // ── Logged-in state ─────────────────────────────────────────────
             <>
               <button
-                onClick={() => navigate('/lobby')}
+                onClick={() => navigate("/lobby")}
                 className="btn-primary text-lg px-10 py-4 flex items-center gap-3"
               >
                 <span className="text-xl">🎮</span>
@@ -86,7 +99,7 @@ export default function HomePage() {
               </button>
 
               <button
-                onClick={() => navigate('/leaderboard')}
+                onClick={() => navigate("/leaderboard")}
                 className="btn-secondary px-6 py-4"
               >
                 🏆 LEADERBOARD
@@ -103,21 +116,21 @@ export default function HomePage() {
             // ── Logged-out state ────────────────────────────────────────────
             <>
               <button
-                onClick={() => navigate('/register')}
+                onClick={() => navigate("/register")}
                 className="btn-primary text-lg px-10 py-4"
               >
                 START PLAYING
               </button>
 
               <button
-                onClick={() => navigate('/login')}
+                onClick={() => navigate("/login")}
                 className="btn-secondary px-6 py-4"
               >
                 SIGN IN
               </button>
 
               <button
-                onClick={() => navigate('/leaderboard')}
+                onClick={() => navigate("/leaderboard")}
                 className="btn-secondary px-6 py-4"
               >
                 🏆 LEADERBOARD
@@ -134,31 +147,41 @@ export default function HomePage() {
           className="flex flex-wrap justify-center gap-3"
         >
           {[
-            { icon: '🧩', label: 'Procedural Puzzles' },
-            { icon: '⚡', label: 'Real-time Multiplayer' },
-            { icon: '💀', label: 'Elimination Rounds' },
-            { icon: '🔒', label: 'Anti-Cheat System' },
-            { icon: '🏆', label: 'Global Leaderboard' },
-            { icon: '👁️', label: 'Spectator Mode' },
-          ].map(f => (
-            <span key={f.label}
-              className="font-mono text-xs text-gray-600 border border-gray-800 px-3 py-1.5 rounded-full hover:border-gray-600 hover:text-gray-400 transition-colors">
+            { icon: "🧩", label: "Procedural Puzzles" },
+            { icon: "⚡", label: "Real-time Multiplayer" },
+            { icon: "💀", label: "Elimination Rounds" },
+            { icon: "🔒", label: "Anti-Cheat System" },
+            { icon: "🏆", label: "Global Leaderboard" },
+            { icon: "👁️", label: "Spectator Mode" },
+          ].map((f) => (
+            <span
+              key={f.label}
+              className="font-mono text-xs text-gray-600 border border-gray-800 px-3 py-1.5 rounded-full hover:border-gray-600 hover:text-gray-400 transition-colors"
+            >
               {f.icon} {f.label}
             </span>
           ))}
         </motion.div>
 
         {/* Verified/subscribed badge if logged in */}
-        {isLoggedIn && (player.isVerified || player.subscription?.plan !== 'free') && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }}>
-            <span className="font-mono text-xs text-yellow-500 border border-yellow-800 px-3 py-1 rounded-full">
-              {player.subscription?.plan === 'elite' ? '⭐ ELITE' :
-               player.subscription?.plan === 'pro'   ? '✨ PRO'   :
-               player.isVerified                      ? '✓ VERIFIED' : ''}
-            </span>
-          </motion.div>
-        )}
-
+        {isLoggedIn &&
+          (player.isVerified || player.subscription?.plan !== "free") && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ delay: 1 }}
+            >
+              <span className="font-mono text-xs text-yellow-500 border border-yellow-800 px-3 py-1 rounded-full">
+                {player.subscription?.plan === "elite"
+                  ? "⭐ ELITE"
+                  : player.subscription?.plan === "pro"
+                    ? "✨ PRO"
+                    : player.isVerified
+                      ? "✓ VERIFIED"
+                      : ""}
+              </span>
+            </motion.div>
+          )}
       </div>
     </div>
   );

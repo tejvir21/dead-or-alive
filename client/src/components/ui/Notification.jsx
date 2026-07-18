@@ -1,58 +1,55 @@
 /**
- * Notification — Animated toast notification system
+ * Notification.jsx — Toast notification system
+ * Place <Notification /> once in App.jsx (outside routes, inside BrowserRouter).
+ * Notifications are triggered anywhere via:
+ *   useGameStore.getState().showNotification('message', 'success'|'error'|'warning'|'info'|'elimination')
  */
-import React from "react";
-import { motion } from "framer-motion";
+import React, { useEffect } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import useGameStore from '../../store/gameStore';
 
-const typeStyles = {
-  info: {
-    border: "border-blue-700/50",
-    bg: "bg-blue-900/30",
-    icon: "ℹ",
-    text: "text-blue-300",
-  },
-  success: {
-    border: "border-green-700/50",
-    bg: "bg-green-900/30",
-    icon: "✓",
-    text: "text-green-300",
-  },
-  warning: {
-    border: "border-yellow-700/50",
-    bg: "bg-yellow-900/30",
-    icon: "⚠",
-    text: "text-yellow-300",
-  },
-  error: {
-    border: "border-red-700/50",
-    bg: "bg-red-900/30",
-    icon: "✕",
-    text: "text-red-300",
-  },
-  elimination: {
-    border: "border-red-600/60",
-    bg: "bg-red-900/40",
-    icon: "💀",
-    text: "text-red-300",
-  },
+const ICONS = {
+  success:     '✅',
+  error:       '❌',
+  warning:     '⚠️',
+  info:        'ℹ️',
+  elimination: '💀',
 };
 
-export default function Notification({ notification }) {
-  const style = typeStyles[notification?.type] || typeStyles.info;
+const COLORS = {
+  success:     'border-green-700 bg-green-950/80 text-green-300',
+  error:       'border-red-700 bg-red-950/80 text-red-300',
+  warning:     'border-yellow-700 bg-yellow-950/80 text-yellow-300',
+  info:        'border-blue-700 bg-blue-950/80 text-blue-300',
+  elimination: 'border-red-800 bg-red-950/90 text-red-200',
+};
+
+export default function Notification() {
+  const notifications = useGameStore(s => s.notifications || []);
 
   return (
-    <motion.div
-      key={notification?.id}
-      initial={{ opacity: 0, y: -20, x: 20 }}
-      animate={{ opacity: 1, y: 0, x: 0 }}
-      exit={{ opacity: 0, x: 40 }}
-      transition={{ type: "spring", stiffness: 400, damping: 30 }}
-      className={`fixed top-4 right-4 z-[9999] max-w-sm flex items-center gap-3
-        px-4 py-3 rounded-lg border backdrop-blur-sm shadow-lg
-        ${style.border} ${style.bg}`}
-    >
-      <span className="text-lg flex-shrink-0">{style.icon}</span>
-      <p className={`font-body text-sm ${style.text}`}>{notification?.msg}</p>
-    </motion.div>
+    <div className="fixed top-4 right-4 z-[100] flex flex-col gap-2 pointer-events-none max-w-sm w-full">
+      <AnimatePresence>
+        {notifications.map(n => (
+          <motion.div
+            key={n.id}
+            initial={{ opacity: 0, x: 60, scale: 0.95 }}
+            animate={{ opacity: 1, x: 0,  scale: 1    }}
+            exit={{    opacity: 0, x: 60, scale: 0.9  }}
+            transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+            className={`flex items-start gap-3 px-4 py-3 rounded-lg border backdrop-blur-md shadow-xl pointer-events-auto ${COLORS[n.type] || COLORS.info}`}
+          >
+            <span className="text-base flex-shrink-0 mt-0.5">{ICONS[n.type] || ICONS.info}</span>
+            <p className="font-mono text-xs leading-relaxed flex-1">{n.message}</p>
+            <button
+              onClick={() => useGameStore.getState().dismissNotification(n.id)}
+              className="text-current opacity-40 hover:opacity-80 flex-shrink-0 text-sm leading-none"
+            >
+              ×
+            </button>
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
   );
 }

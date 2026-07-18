@@ -14,6 +14,11 @@ services:
       - '27017:27017'
     networks:
       - doa-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ── Game Server ───────────────────────────────────────────────────────────────
   server:
@@ -31,6 +36,7 @@ services:
       JWT_EXPIRES_IN: 7d
       CLIENT_URL: ${CLIENT_URL:-http://localhost:5173}
       NODE_ENV: production
+      ADMIN_IDS: ${ADMIN_IDS:-}
     ports:
       - '3001:3001'
     networks:

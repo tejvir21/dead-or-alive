@@ -185,6 +185,43 @@ router.delete('/curves/:name', protect, adminOnly, async (req, res) => {
 });
 
 // ── Subscription plans ────────────────────────────────────────────────────────
+
+// Create a new plan
+router.post('/plans', protect, adminOnly, async (req, res) => {
+  try {
+    const { name, label, price, currency, durationDays, maxPlayersBonus, features } = req.body;
+
+    if (!name || !/^[a-z0-9_]+$/.test(name)) {
+      return res.status(400).json({ error: 'Plan name is required and must be lowercase letters/numbers/underscores only (e.g. "premium")' });
+    }
+    if (typeof price !== 'number' || price <= 0) {
+      return res.status(400).json({ error: 'Price must be a positive number' });
+    }
+    if (typeof durationDays !== 'number' || durationDays <= 0) {
+      return res.status(400).json({ error: 'Duration (days) must be a positive number' });
+    }
+
+    const settings = await GameSettings.getSingleton();
+    if (settings.subscriptionPlans.some(p => p.name === name)) {
+      return res.status(409).json({ error: `A plan named "${name}" already exists` });
+    }
+
+    settings.subscriptionPlans.push({
+      name,
+      label: label || name,
+      price,
+      currency: currency || 'INR',
+      durationDays,
+      maxPlayersBonus: maxPlayersBonus || 0,
+      features: Array.isArray(features) ? features : [],
+    });
+    await settings.save();
+    await logAction(req, 'settings.plan.create', name, req.body);
+    res.status(201).json({ settings });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+// Update an existing plan
 router.patch('/plans/:name', protect, adminOnly, async (req, res) => {
   try {
     const settings = await GameSettings.getSingleton();
@@ -195,6 +232,33 @@ router.patch('/plans/:name', protect, adminOnly, async (req, res) => {
     await settings.save();
     await logAction(req, 'settings.plan.update', req.params.name, req.body);
     res.json({ settings });
+  } catch (err) { res.status(400).json({ error: err.message }); }
+});
+
+// Delete a plan
+router.delete('/plans/:name', protect, adminOnly, async (req, res) => {
+  try {
+    const settings = await GameSettings.getSingleton();
+    const exists = settings.subscriptionPlans.some(p => p.name === req.params.name);
+    if (!exists) return res.status(404).json({ error: 'Plan not found' });
+
+    // Safety check: warn (but don't block) if players currently hold this plan —
+    // their existing subscription.plan value is untouched either way (it's just
+    // a string on the Player document), this only removes it from the purchase
+    // list so new/renewal purchases of it are no longer possible.
+    const Player = require('../models/Player');
+    const activeCount = await Player.countDocuments({ 'subscription.plan': req.params.name, 'subscription.status': 'active' });
+
+    settings.subscriptionPlans = settings.subscriptionPlans.filter(p => p.name !== req.params.name);
+    await settings.save();
+    await logAction(req, 'settings.plan.delete', req.params.name, { activePlayersAffected: activeCount });
+
+    res.json({
+      settings,
+      warning: activeCount > 0
+        ? `${activeCount} player(s) currently have this plan active. They keep it until it expires, but can no longer renew this exact plan.`
+        : null,
+    });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 

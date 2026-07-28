@@ -9,6 +9,7 @@ import useAuthStore from "../store/authStore";
 import { apiJSON } from "../api/apiClient";
 import OTPModal from "../components/ui/OTPModal";
 import BetaAccessSection from "../components/ui/BetaAccessSection";
+import SubscriptionSection from "../components/ui/SubscriptionSection";
 
 const COUNTRIES = [
   "Afghanistan",
@@ -298,7 +299,7 @@ export default function ProfilePage() {
 
         {/* Tabs */}
         <div className="flex gap-2">
-          {["profile", "security", "stats"].map((t) => (
+          {["profile", "security", "stats", "billing"].map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -690,6 +691,13 @@ export default function ProfilePage() {
           </div>
         )}
       </div>
+
+      {/* Billing / Subscription Tab */}
+      {tab === "billing" && (
+        <div className="space-y-4 py-6 max-w-2xl mx-auto">
+          <SubscriptionSection player={player} onUpdate={fetchProfile} />
+        </div>
+      )}
 
       {/* OTP Modal */}
       {otpModal && (

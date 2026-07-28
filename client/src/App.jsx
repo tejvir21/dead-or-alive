@@ -21,6 +21,7 @@ import ProfilePage from "./pages/ProfilePage";
 import AdminPage from "./pages/AdminPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import BetaGate from "./components/BetaGate";
+import PricingPage from "./pages/PricingPage";
 
 import useNotificationStore from "./store/notificationStore";
 
@@ -97,6 +98,7 @@ export default function App() {
               </ProtectedRoute>
             }
           />
+          <Route path="/pricing" element={<PricingPage />} />
           <Route
             path="/admin"
             element={

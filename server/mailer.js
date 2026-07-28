@@ -79,6 +79,67 @@ async function sendNotificationEmail(to, title, message) {
 }
 
 /**
+ * Send a payment receipt email with the PDF attached
+ */
+async function sendReceiptEmail(to, payment, pdfBuffer) {
+  const transport = getTransporter();
+  const amountRupees = (payment.amount / 100).toFixed(2);
+
+  if (!transport) {
+    logger.info(`[Receipt Email] Would send to ${to}: Receipt ${payment.receiptNumber} for Rs.${amountRupees}`);
+    return;
+  }
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <body style="background:#0a0a0a;color:#fff;font-family:monospace;padding:40px;max-width:500px;margin:0 auto;">
+      <div style="border:1px solid #1a3a1a;border-radius:8px;padding:32px;background:#0d1a0d;">
+        <h1 style="color:#4ade80;font-size:24px;margin:0 0 8px;">DEAD OR ALIVE</h1>
+        <p style="color:#6b7280;font-size:12px;margin:0 0 24px;letter-spacing:0.1em;">LOGIC ESCAPE</p>
+
+        <h2 style="color:#fff;font-size:18px;margin:0 0 12px;">Payment Confirmed 🎉</h2>
+        <p style="color:#d1d5db;font-size:14px;line-height:1.6;">
+          Thanks for subscribing! Your <strong style="color:#4ade80;">${payment.plan.toUpperCase()}</strong>
+          subscription is now active.
+        </p>
+
+        <div style="background:#111;border:1px solid #166534;border-radius:8px;padding:16px;margin:20px 0;">
+          <p style="color:#9ca3af;font-size:11px;margin:0 0 4px;">Amount Paid</p>
+          <p style="color:#4ade80;font-size:24px;font-weight:bold;margin:0;">Rs. ${amountRupees}</p>
+          <p style="color:#6b7280;font-size:11px;margin:12px 0 0;">Receipt: ${payment.receiptNumber}</p>
+        </div>
+
+        <p style="color:#6b7280;font-size:12px;">Your full receipt is attached as a PDF to this email.</p>
+
+        <hr style="border:none;border-top:1px solid #1f2937;margin:24px 0;"/>
+        <p style="color:#4b5563;font-size:11px;margin:0;">
+          Dead or Alive: Logic Escape — do not reply to this email
+        </p>
+      </div>
+    </body>
+    </html>
+  `;
+
+  await transport.sendMail({
+    from: `"Dead or Alive" <${process.env.FROM_EMAIL || process.env.SMTP_USER}>`,
+    to,
+    subject: `Receipt ${payment.receiptNumber} — Dead or Alive ${payment.plan.toUpperCase()}`,
+    html,
+    text: `Payment confirmed! Rs. ${amountRupees} for ${payment.plan.toUpperCase()}. Receipt: ${payment.receiptNumber}`,
+    attachments: [
+      {
+        filename: `receipt-${payment.receiptNumber}.pdf`,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      },
+    ],
+  });
+
+  logger.info(`[mailer] Receipt email sent to ${to}: ${payment.receiptNumber}`);
+}
+
+/**
  * Send OTP email for verification
  */
 async function sendEmailOTP(to, otp, purpose = 'email') {
@@ -186,4 +247,4 @@ async function verifyConnection() {
   }
 }
 
-module.exports = { sendEmailOTP, sendWhatsAppOTP, sendSMSOTP, verifyConnection, sendNotificationEmail };
+module.exports = { sendEmailOTP, sendWhatsAppOTP, sendSMSOTP, verifyConnection, sendNotificationEmail, sendReceiptEmail };

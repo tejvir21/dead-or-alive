@@ -6,7 +6,7 @@
 
 ---
 
-Latest update: 2026-07-18 — documentation refresh, clarified admin setup, anti-cheat notes, and quick changelog.
+Latest update: 2026-07-28 — documentation refresh and clarity improvements across Quick Start, Admin System, and anti-cheat notes.
 
 ---
 
@@ -186,9 +186,9 @@ How to become an admin:
 Method 1 — Env var (recommended)
 1. Register via UI.
 2. Get your player _id (via mongosh or `GET /api/auth/me`).
-3. Add to `server/.env`:
+3. Add your player id(s) to `server/.env` — comma-separated:
    ```env
-   ADMIN_IDS=64abc123def456789abc1234
+   ADMIN_IDS=64abc123def456789abc1234,64def456abc7890123456789
    ```
 4. Restart the server.
 
@@ -248,7 +248,7 @@ All socket connections require a valid JWT in the handshake.
 
 ## Game Architecture
 
-- In-memory `GameSession` objects tracked in `activeSessions: Map<roomCode, GameSession>`.  
+- In-memory `GameSession` objects tracked in `activeSessions: Map<roomCode, GameSession]`.  
 - Server persists final results and key state transitions to MongoDB at round/completion points.  
 - `correctDoor` is computed server-side and never transmitted to players until reveal.
 
@@ -305,6 +305,7 @@ docker exec doa-server node utils/seedClues.js
 
 ## Changelog (selected)
 
+- 2026-07-28 — README refreshed: wording, accuracy, and formatting; clarified admin workflow and Quick Start (documentation-only, no code changes).
 - 2026-07-18 — Documentation refresh: clarified admin env workflow, emphasized server-side anti-cheat, added quick changelog.
 - (Previous) — Seed script (`utils/seedClues.js`) and admin bulk-import endpoints added; socket event timings refined; auto-assign non-choosers.
 

@@ -34,6 +34,7 @@ const corsOptions = {
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 };
 app.use(cors(corsOptions));
+app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -57,6 +58,7 @@ app.use('/api/stats', apiLimiter, statsRouter);
 app.use('/api/admin', apiLimiter, adminRouter);
 app.use('/api/beta', apiLimiter, betaRouter);
 app.use('/api/notifications', apiLimiter, notificationRouter);
+app.use('/api/payments', require('./routes/payments'));
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
@@ -79,6 +81,10 @@ const io = new Server(server, {
   pingInterval: 25000,
   transports: ['websocket', 'polling'],
 });
+
+const { startExpiryCron } = require('./utils/subscriptionExpiry');
+startExpiryCron(io);
+
 app.set('io', io);
 initSocket(io);
 

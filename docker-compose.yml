@@ -1,4 +1,4 @@
-version: '3.9'
+version: "3.9"
 
 services:
   # ── MongoDB ──────────────────────────────────────────────────────────────────
@@ -11,7 +11,7 @@ services:
     environment:
       MONGO_INITDB_DATABASE: dead-or-alive
     ports:
-      - '27017:27017'
+      - "27017:27017"
     networks:
       - doa-net
     healthcheck:
@@ -38,7 +38,7 @@ services:
       NODE_ENV: production
       ADMIN_IDS: ${ADMIN_IDS:-}
     ports:
-      - '3001:3001'
+      - "3001:3001"
     networks:
       - doa-net
 
@@ -50,12 +50,15 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:3001/api}
         VITE_SOCKET_URL: ${VITE_SOCKET_URL:-http://localhost:3001}
+        VITE_BETA_VERSION: ${VITE_BETA_VERSION:-false}
+        VITE_MAIN_APP_URL: ${VITE_MAIN_APP_URL:-http://localhost:5173}
+
     container_name: doa-client
     restart: unless-stopped
     depends_on:
       - server
     ports:
-      - '80:80'
+      - "80:80"
     networks:
       - doa-net
 

@@ -121,9 +121,8 @@ export default function BetaGate({ children }) {
     );
   }
 
-  if (import.meta.env.VITE_BETA_VERSION === "false") return children; // skip gate in BETA
-
-  if (status === "allowed") return children;
+  if (status === "allowed" || import.meta.env.VITE_BETA_VERSION === "false")
+    return children; // skip gate in BETA
 
   // ── Denied — locked screen with working purchase buttons ────────────────────
   const PLAN_COLORS = {

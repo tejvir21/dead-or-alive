@@ -123,13 +123,6 @@ export default function BetaGate({ children }) {
 
   const isMainApp = import.meta.env.VITE_BETA_VERSION != "true";
 
-  console.log(
-    "VITE_BETA_VERSION",
-    import.meta.env.VITE_BETA_VERSION,
-    "🎉 isMainApp:",
-    import.meta.env.VITE_BETA_VERSION != "true",
-  );
-
   if (status === "allowed" || isMainApp) return children; // let normal app render
 
   // ── Denied — locked screen with working purchase buttons ────────────────────

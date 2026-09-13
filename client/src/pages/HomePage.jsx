@@ -64,7 +64,8 @@ export default function HomePage() {
               Welcome back,{" "}
               <span
                 className="text-green-400 font-semibold cursor-pointer"
-                onClick={() => (window.location = "/profile")}
+                title={"Go to Profile"}
+                onClick={() => navigate("/profile")}
               >
                 {player.username}
               </span>

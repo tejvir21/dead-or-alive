@@ -1,193 +1,120 @@
 /**
- * GameSettings Model
- * Single-document store for all admin-configurable settings.
- * Always read via GameSettings.getSingleton()
+ * GameSettings.js — Admin-controlled singleton
+ * New: daily limits, auto-start timer, kick system, beta access
  */
 const mongoose = require('mongoose');
 
-const difficultyBandSchema = new mongoose.Schema(
-  { min: Number, max: Number, label: String },
-  { _id: false }
-);
+const gameSettingsSchema = new mongoose.Schema({
+  _singleton: { type: Boolean, default: true, unique: true },
 
-const difficultyCurveSchema = new mongoose.Schema(
-  {
-    name:        { type: String, required: true }, // 'gentle', 'balanced', etc.
-    label:       { type: String },
-    description: { type: String },
-    // map of room index (0-based) → difficulty level
-    // stored as array so index = room position
-    levels:      { type: [Number], required: true },
+  // ── Timers ────────────────────────────────────────────────────────────────
+  puzzleTimerSeconds:    { type: Number, default: 30 },
+  doorTimerSeconds:      { type: Number, default: 30 },
+  countdownSeconds:      { type: Number, default: 5 },
+  timerReductionFactor:  { type: Number, default: 0.3 },
+  timerReductionEnabled: { type: Boolean, default: true },
+
+  // ── Player limits ─────────────────────────────────────────────────────────
+  maxPlayersNormal:       { type: Number, default: 16 },
+  maxPlayersVerified:     { type: Number, default: 32 },
+  minPlayersToStart:      { type: Number, default: 1 },
+  reconnectGraceNormal:   { type: Number, default: 30 },
+  reconnectGraceVerified: { type: Number, default: 60 },
+
+  // ── Daily room limits (-1 = unlimited) ────────────────────────────────────
+  dailyLimits: {
+    free:     { create: { type: Number, default: 3 },  join: { type: Number, default: 10 } },
+    verified: { create: { type: Number, default: 8 },  join: { type: Number, default: 25 } },
+    pro:      { create: { type: Number, default: 20 }, join: { type: Number, default: 60 } },
+    elite:    { create: { type: Number, default: -1 }, join: { type: Number, default: -1 } },
+  },
+
+  // ── Auto-start timer ──────────────────────────────────────────────────────
+  autoStartTimer: {
+    enabled:         { type: Boolean, default: true },
+    defaultDuration: { type: Number,  default: 180 },
+    tierLimits: {
+      free:     { min: { type: Number, default: 180 }, max: { type: Number, default: 180 } },
+      verified: { min: { type: Number, default: 60 },  max: { type: Number, default: 300 } },
+      pro:      { min: { type: Number, default: 30 },  max: { type: Number, default: 600 } },
+      elite:    { min: { type: Number, default: 10 },  max: { type: Number, default: 1800 } },
+    },
+  },
+
+  // ── Kick system ───────────────────────────────────────────────────────────
+  kickSystem: {
+    enabled:            { type: Boolean, default: true },
+    minimumPlayers:     { type: Number,  default: 3 },
+    thresholdPercent:   { type: Number,  default: 50 },
+    voteTimeoutSeconds: { type: Number,  default: 30 },
+    creatorCanKick:     { type: Boolean, default: true },
+  },
+
+  // ── Beta access ───────────────────────────────────────────────────────────
+  betaAccess: {
+    enabled:       { type: Boolean, default: false },
+    betaUrl:       { type: String,  default: '' },
+    allowElite:    { type: Boolean, default: true },
+    allowPro:      { type: Boolean, default: false },
+    lockedMessage: { type: String, default: 'This is a restricted beta version. Subscribe to Pro or Elite to request access.' },
+  },
+
+  // ── Difficulty curves ──────────────────────────────────────────────────────
+  difficultyCurves: [{
+    name:        { type: String, required: true },
+    label:       { type: String, required: true },
+    description: { type: String, default: '' },
+    levels:      [{ type: Number, min: 1, max: 10 }],
+    availableTo: { type: String, enum: ['all', 'verified', 'admin'], default: 'all' },
     isDefault:   { type: Boolean, default: false },
-    availableTo: { type: String, enum: ['all','verified','admin'], default: 'admin' },
+  }],
+
+  // ── Feature flags ─────────────────────────────────────────────────────────
+  features: {
+    maintenanceMode:    { type: Boolean, default: false },
+    spectatorMode:      { type: Boolean, default: true },
+    globalLeaderboard:  { type: Boolean, default: true },
+    chat:               { type: Boolean, default: true },
+    voteKick:           { type: Boolean, default: true },
+    dailyLimitsEnabled: { type: Boolean, default: true },
+    autoStartEnabled:   { type: Boolean, default: true },
   },
-  { _id: false }
-);
 
-const gameSettingsSchema = new mongoose.Schema(
-  {
-    _singleton: { type: Boolean, default: true, unique: true },
+  // ── Subscription plans ─────────────────────────────────────────────────────
+  subscriptionPlans: [{
+    name:            { type: String },
+    label:           { type: String },
+    price:           { type: Number },
+    currency:        { type: String, default: 'INR' },
+    durationDays:    { type: Number },
+    maxPlayersBonus: { type: Number, default: 0 },
+    features:        [String],
+  }],
 
-    // ── Player limits ─────────────────────────────────────────────────────────
-    maxPlayersNormal:   { type: Number, default: 16 },
-    maxPlayersVerified: { type: Number, default: 32 },
-    minPlayersToStart:  { type: Number, default: 1 },
+}, { timestamps: true });
 
-    // ── Timer settings (seconds) ──────────────────────────────────────────────
-    puzzleTimerSeconds:    { type: Number, default: 30 },
-    doorTimerSeconds:      { type: Number, default: 30 },
-    countdownSeconds:      { type: Number, default: 5 },
-    reconnectGraceNormal:  { type: Number, default: 30 },
-    reconnectGraceVerified:{ type: Number, default: 60 },
-
-    // ── Timer reduction on correct early pick ─────────────────────────────────
-    timerReductionEnabled: { type: Boolean, default: true },
-    timerReductionFactor:  { type: Number, default: 0.3 }, // admin can change
-
-    // ── Difficulty curves ──────────────────────────────────────────────────────
-    difficultyCurves: {
-      type: [difficultyCurveSchema],
-      default: [
-        {
-          name: 'gentle',
-          label: 'Gentle',
-          description: 'Easy start, gradual increase',
-          levels: [1,1,2,2,3,3,4,4,5,5],
-          isDefault: false,
-          availableTo: 'all',
-        },
-        {
-          name: 'balanced',
-          label: 'Balanced',
-          description: 'Steady climb across all rooms',
-          levels: [1,2,3,4,5,6,7,8,9,10],
-          isDefault: false,
-          availableTo: 'all',
-        },
-        {
-          name: 'stepped',
-          label: 'Stepped',
-          description: 'Easy → Medium → Hard → Brutal → Nightmare',
-          levels: [1,1,3,3,5,5,7,7,9,10],
-          isDefault: true,
-          availableTo: 'all',
-        },
-        {
-          name: 'spike',
-          label: 'Spike',
-          description: 'Easy start then sudden brutality',
-          levels: [1,1,2,5,7,9,10,10,10,10],
-          isDefault: false,
-          availableTo: 'verified',
-        },
-        {
-          name: 'nightmare',
-          label: 'Nightmare',
-          description: 'No mercy from the start',
-          levels: [5,6,7,7,8,8,9,9,10,10],
-          isDefault: false,
-          availableTo: 'verified',
-        },
-        {
-          name: 'random',
-          label: 'Random',
-          description: 'Pure chaos — any difficulty any room',
-          levels: [3,7,1,9,4,10,2,8,5,6],
-          isDefault: false,
-          availableTo: 'verified',
-        },
-        {
-          name: 'ascending_fast',
-          label: 'Ascending Fast',
-          description: 'Quick difficulty ramp',
-          levels: [1,2,4,5,6,7,8,9,10,10],
-          isDefault: false,
-          availableTo: 'all',
-        },
-        {
-          name: 'expert',
-          label: 'Expert',
-          description: 'For seasoned players only',
-          levels: [4,5,5,6,6,7,8,8,9,10],
-          isDefault: false,
-          availableTo: 'verified',
-        },
-      ],
-    },
-
-    // ── Rooms per player count ─────────────────────────────────────────────────
-    roomsPerPlayerCount: {
-      type: Map,
-      of: Number,
-      default: {
-        '1': 5, '2': 5, '3': 5, '4': 6, '5': 7,
-        '6': 8, '7': 9, '8': 10, '9': 10, '10': 10,
-        '11': 10, '12': 10, '13': 10, '14': 10,
-        '15': 10, '16': 10, '17': 10, '18': 10,
-        '19': 10, '20': 10, '21': 10, '22': 10,
-        '23': 10, '24': 10, '25': 10, '26': 10,
-        '27': 10, '28': 10, '29': 10, '30': 10,
-        '31': 10, '32': 10,
-      },
-    },
-
-    // ── Clan settings ─────────────────────────────────────────────────────────
-    maxClanSize:         { type: Number, default: 20 },
-    clanMatchMinMembers: { type: Number, default: 2 },
-
-    // ── Feature flags ─────────────────────────────────────────────────────────
-    features: {
-      teamsEnabled:       { type: Boolean, default: true },
-      clansEnabled:       { type: Boolean, default: true },
-      spectatorEnabled:   { type: Boolean, default: true },
-      replayEnabled:      { type: Boolean, default: false },
-      maintenanceMode:    { type: Boolean, default: false },
-      newUserRegistration:{ type: Boolean, default: true },
-      subscriptionsEnabled:{ type: Boolean, default: true },
-      chatEnabled:        { type: Boolean, default: true },
-      broadcastChatForSubscribers: { type: Boolean, default: true },
-    },
-
-    // ── Subscription plans ────────────────────────────────────────────────────
-    subscriptionPlans: {
-      type: [
-        {
-          name:        String,
-          label:       String,
-          priceINR:    Number,
-          durationDays:Number,
-          features:    [String],
-          razorpayPlanId: String,
-          isActive:    Boolean,
-        },
-      ],
-      default: [
-        {
-          name: 'free', label: 'Free', priceINR: 0, durationDays: 0,
-          features: ['16_max_players','basic_clues','standard_reconnect'],
-          razorpayPlanId: '', isActive: true,
-        },
-        {
-          name: 'pro', label: 'Pro', priceINR: 99, durationDays: 30,
-          features: ['32_max_players','custom_room_code','exclusive_themes','stats_dashboard','extended_reconnect','early_access'],
-          razorpayPlanId: '', isActive: true,
-        },
-        {
-          name: 'elite', label: 'Elite', priceINR: 799, durationDays: 365,
-          features: ['32_max_players','custom_room_code','exclusive_themes','stats_dashboard','extended_reconnect','early_access','clan_creation','password_rooms','broadcast_chat','all_difficulty_curves'],
-          razorpayPlanId: '', isActive: true,
-        },
-      ],
-    },
-  },
-  { timestamps: true }
-);
-
-// Always return the one settings document
 gameSettingsSchema.statics.getSingleton = async function () {
-  let settings = await this.findOne({ _singleton: true });
-  if (!settings) settings = await this.create({ _singleton: true });
-  return settings;
+  let s = await this.findOne({ _singleton: true });
+  if (!s) {
+    s = await this.create({
+      _singleton: true,
+      difficultyCurves: [
+        { name: 'gentle',         label: 'Gentle',         levels: [1,1,2,2,3,3,4,4,5,5],   availableTo: 'all',      isDefault: false },
+        { name: 'balanced',       label: 'Balanced',       levels: [2,3,4,4,5,5,6,6,7,7],   availableTo: 'all',      isDefault: false },
+        { name: 'stepped',        label: 'Stepped',        levels: [1,2,3,4,5,6,7,8,9,10],  availableTo: 'all',      isDefault: true  },
+        { name: 'ascending_fast', label: 'Ascending Fast', levels: [3,4,5,6,7,7,8,8,9,10],  availableTo: 'all',      isDefault: false },
+        { name: 'spike',          label: 'Spike',          levels: [1,2,3,8,9,3,4,9,10,10], availableTo: 'verified', isDefault: false },
+        { name: 'nightmare',      label: 'Nightmare',      levels: [5,6,7,7,8,8,9,9,10,10], availableTo: 'verified', isDefault: false },
+        { name: 'expert',         label: 'Expert',         levels: [7,7,8,8,8,9,9,9,10,10], availableTo: 'verified', isDefault: false },
+        { name: 'random',         label: 'Random',         levels: [1,3,5,2,8,4,9,6,10,7],  availableTo: 'verified', isDefault: false },
+      ],
+      subscriptionPlans: [
+        { name: 'pro',   label: 'Pro',   price: 199, durationDays: 30, features: ['Extended daily limits','Verified badge','Beta access (on request)'] },
+        { name: 'elite', label: 'Elite', price: 499, durationDays: 30, features: ['Unlimited rooms','Auto beta access','Priority support','Nightmare curves'] },
+      ],
+    });
+  }
+  return s;
 };
 
 module.exports = mongoose.model('GameSettings', gameSettingsSchema);

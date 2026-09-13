@@ -1,130 +1,139 @@
 /**
- * Game Store (Zustand)
- * Manages all in-game state synced from socket events
+ * gameStore.js — Fixed notification system
+ *
+ * Previous issue: showNotification existed but notifications were never
+ * stored in state — they were fire-and-forget with no queue, so the
+ * Notification component had nothing to render.
+ *
+ * Fix: notifications is now a proper array in state. showNotification
+ * appends to it with a unique id and auto-removes after duration.
+ * dismissNotification removes one by id (for the × button).
  */
 import { create } from 'zustand';
 
 const useGameStore = create((set, get) => ({
-  // ── Session State ────────────────────────────────────────────────────────────
-  roomCode: null,
-  session: null,         // full session state from server
-  status: 'idle',        // idle | waiting | countdown | in_progress | completed
-  roundPhase: 'idle',    // idle | puzzle | door_selection | reveal | transition
-
-  // ── Current Room ─────────────────────────────────────────────────────────────
-  currentRoom: null,
+  // ── Room / session ─────────────────────────────────────────────────────────
+  roomCode:        null,
+  session:         null,
+  currentRoom:     null,
+  roundPhase:      'idle',   // idle | puzzle | door_selection | reveal | transition | game_end
   currentRoomIndex: 0,
-  totalRooms: 0,
+  totalRooms:      0,
+  chosenCount:     0,
+  totalAlive:      0,
+  roundResults:    null,
+  gameEndData:     null,
+  skippedCount:    0,
 
-  // ── Timer ─────────────────────────────────────────────────────────────────────
-  timerSeconds: 0,
-  timerInterval: null,
+  // ── Timer ──────────────────────────────────────────────────────────────────
+  timerSeconds:  0,
+  _timerInterval: null,
 
-  // ── Round State ───────────────────────────────────────────────────────────────
-  myChoice: null,          // 'LIVE' | 'DIE' | null
-  chosenCount: 0,
-  roundResults: null,      // { correctDoor, results, survivors, eliminated }
-  countdown: null,         // pre-game countdown number
-
-  // ── Chat ──────────────────────────────────────────────────────────────────────
+  // ── Chat ───────────────────────────────────────────────────────────────────
   chatMessages: [],
 
-  // ── Game End ──────────────────────────────────────────────────────────────────
-  gameEndData: null,
+  // ── Notifications (toast queue) ────────────────────────────────────────────
+  notifications: [],
 
-  // ── Errors / Notifications ────────────────────────────────────────────────────
-  notification: null,
-
-  // ── Actions ───────────────────────────────────────────────────────────────────
+  // ── Room / session actions ─────────────────────────────────────────────────
   setRoomCode: (code) => set({ roomCode: code }),
 
   updateSession: (session) => {
     if (!session) return;
-    const current = get();
-    // During active gameplay, don't overwrite roundPhase with server's stale 'idle'
-    // The server roundPhase in toPublicState reflects server state which may lag
-    // Phase changes are driven by specific events (roomStarted, doorSelectionStarted, etc.)
-    const activePhases = ['puzzle', 'door_selection', 'reveal', 'transition'];
-    const keepPhase = activePhases.includes(current.roundPhase) &&
-      (session.roundPhase === 'idle' || !session.roundPhase);
-
-    set({
+    set(s => ({
       session,
-      status: session.status || current.status,
-      roundPhase: keepPhase ? current.roundPhase : (session.roundPhase || current.roundPhase),
-      currentRoom: session.currentRoom || current.currentRoom,
-      currentRoomIndex: session.currentRoomIndex ?? current.currentRoomIndex,
-      totalRooms: session.totalRooms || current.totalRooms,
-    });
+      // Only update totalRooms from session if we don't already have it
+      totalRooms: session.totalRooms || s.totalRooms,
+    }));
   },
 
-  setCountdown: (seconds) => set({ countdown: seconds }),
-  clearCountdown: () => set({ countdown: null }),
+  clearRoundState: () => set({
+    currentRoom:  null,
+    roundResults: null,
+    chosenCount:  0,
+    totalAlive:   0,
+    skippedCount: 0,
+  }),
 
+  setRoundResults: (results) => set({ roundResults: results }),
+  setGameEndData:  (data)    => set({ gameEndData: data }),
+
+  // ── Timer actions ──────────────────────────────────────────────────────────
   startTimer: (seconds) => {
-    const { timerInterval } = get();
-    if (timerInterval) clearInterval(timerInterval);
-
+    get().stopTimer();
     set({ timerSeconds: seconds });
     const interval = setInterval(() => {
-      const { timerSeconds } = get();
-      if (timerSeconds <= 1) {
-        clearInterval(interval);
-        set({ timerSeconds: 0, timerInterval: null });
-      } else {
-        set({ timerSeconds: timerSeconds - 1 });
-      }
+      set(s => {
+        if (s.timerSeconds <= 1) {
+          clearInterval(s._timerInterval);
+          return { timerSeconds: 0, _timerInterval: null };
+        }
+        return { timerSeconds: s.timerSeconds - 1 };
+      });
     }, 1000);
-    set({ timerInterval: interval });
+    set({ _timerInterval: interval });
   },
 
   stopTimer: () => {
-    const { timerInterval } = get();
-    if (timerInterval) clearInterval(timerInterval);
-    set({ timerInterval: null, timerSeconds: 0 });
+    const { _timerInterval } = get();
+    if (_timerInterval) {
+      clearInterval(_timerInterval);
+      set({ _timerInterval: null });
+    }
   },
 
-  setMyChoice: (door) => set({ myChoice: door }),
-  setChosenCount: (count, total) => set({ chosenCount: count }),
+  setCountdown: (seconds) => set({ timerSeconds: seconds }),
 
-  setRoundResults: (results) =>
-    set({ roundResults: results, roundPhase: 'reveal' }),
+  // ── Chat actions ───────────────────────────────────────────────────────────
+  addChatMessage: (msg) => set(s => ({
+    chatMessages: [...s.chatMessages.slice(-99), msg], // keep last 100
+  })),
 
-  clearRoundState: () =>
-    set({ myChoice: null, chosenCount: 0, roundResults: null }),
+  clearChat: () => set({ chatMessages: [] }),
 
-  addChatMessage: (msg) =>
-    set((state) => ({
-      chatMessages: [...state.chatMessages.slice(-99), msg], // keep last 100
-    })),
-
-  setGameEndData: (data) => set({ gameEndData: data, status: 'completed' }),
-
-  showNotification: (msg, type = 'info') => {
-    set({ notification: { msg, type, id: Date.now() } });
-    setTimeout(() => set({ notification: null }), 4000);
+  // ── Notification actions ───────────────────────────────────────────────────
+  /**
+   * Show a toast notification.
+   * @param {string} message
+   * @param {'success'|'error'|'warning'|'info'|'elimination'} type
+   * @param {number} duration  ms before auto-dismiss (default 4000)
+   */
+  showNotification: (message, type = 'info', duration = 4000) => {
+    const id = Date.now() + Math.random();
+    set(s => ({
+      notifications: [...s.notifications, { id, message, type }],
+    }));
+    setTimeout(() => {
+      set(s => ({
+        notifications: s.notifications.filter(n => n.id !== id),
+      }));
+    }, duration);
   },
 
+  dismissNotification: (id) => {
+    set(s => ({
+      notifications: s.notifications.filter(n => n.id !== id),
+    }));
+  },
+
+  // ── Reset (navigate away from game) ───────────────────────────────────────
   resetGame: () => {
-    const { timerInterval } = get();
-    if (timerInterval) clearInterval(timerInterval);
+    get().stopTimer();
     set({
-      roomCode: null,
-      session: null,
-      status: 'idle',
-      roundPhase: 'idle',
-      currentRoom: null,
+      roomCode:         null,
+      session:          null,
+      currentRoom:      null,
+      roundPhase:       'idle',
       currentRoomIndex: 0,
-      totalRooms: 0,
-      timerSeconds: 0,
-      timerInterval: null,
-      myChoice: null,
-      chosenCount: 0,
-      roundResults: null,
-      countdown: null,
-      chatMessages: [],
-      gameEndData: null,
-      notification: null,
+      totalRooms:       0,
+      chosenCount:      0,
+      totalAlive:       0,
+      roundResults:     null,
+      gameEndData:      null,
+      skippedCount:     0,
+      timerSeconds:     0,
+      chatMessages:     [],
+      // Keep notifications — they may still be showing
     });
   },
 }));

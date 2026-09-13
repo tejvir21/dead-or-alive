@@ -10,6 +10,7 @@ import { io } from 'socket.io-client';
 import useGameStore from '../store/gameStore';
 import useAuthStore from '../store/authStore';
 import { isExpiringSoon } from '../utils/jwt';
+import useNotificationStore from '../store/notificationStore';
 
 let socket = null;
 let tokenRefreshErrorCount = 0;
@@ -78,53 +79,62 @@ export function connectSocket() {
       try {
         await useAuthStore.getState().refreshAccessToken();
         socket.connect();
-      } catch (_) {}
+      } catch (_) { }
     }
   });
 
-  socket.on('playerJoined',      ({ username, session }) => {
+  socket.on('playerJoined', ({ username, session }) => {
     useGameStore.getState().updateSession?.(session);
     useGameStore.getState().showNotification?.(`${username} joined`, 'info');
   });
-  socket.on('playerLeft',        ({ username, session }) => {
+  socket.on('playerLeft', ({ username, session }) => {
     useGameStore.getState().updateSession?.(session);
     useGameStore.getState().showNotification?.(`${username} left`, 'warning');
   });
-  socket.on('playerDisconnected',({ username, graceSeconds }) => {
+  socket.on('playerDisconnected', ({ username, graceSeconds }) => {
     useGameStore.getState().showNotification?.(`${username} disconnected (${graceSeconds}s to reconnect)`, 'warning');
   });
   socket.on('playerReconnected', ({ username, session }) => {
     useGameStore.getState().updateSession?.(session);
     useGameStore.getState().showNotification?.(`${username} reconnected`, 'success');
   });
-  socket.on('hostTransferred',   ({ newHost }) => {
+  socket.on('hostTransferred', ({ newHost }) => {
     useGameStore.getState().showNotification?.(`${newHost} is now the host`, 'info');
   });
-  socket.on('countdownStarted',  ({ seconds }) => {
+  socket.on('countdownStarted', ({ seconds }) => {
     useGameStore.getState().setCountdown?.(seconds);
   });
-  socket.on('countdownTick',     ({ seconds }) => {
+  socket.on('countdownTick', ({ seconds }) => {
     useGameStore.getState().setCountdown?.(seconds);
   });
-  socket.on('error',             ({ message }) => {
+  socket.on('notification', (notification) => {
+    useNotificationStore.getState().receiveRealtimeNotification(notification);
+
+    // Also show a toast for important types
+    const importantTypes = ['admin_banned', 'admin_unbanned', 'kicked_you', 'beta_approved'];
+    if (importantTypes.includes(notification.type)) {
+      useGameStore.getState().showNotification?.(notification.message, 'info');
+    }
+  });
+  socket.on('error', ({ message }) => {
     useGameStore.getState().showNotification?.(message, 'error');
   });
 
   return socket;
 }
 
-export function getSocket()      { return socket; }
+export function getSocket() { return socket; }
 export function disconnectSocket() {
   if (socket) { socket.removeAllListeners(); socket.disconnect(); socket = null; }
 }
 
 export const emit = {
-  createRoom:  (opts)                  => socket?.emit('createRoom', opts),
-  joinRoom:    (roomCode, spectate=false) => socket?.emit('joinRoom', { roomCode, spectate }),
-  leaveRoom:   (roomCode)              => socket?.emit('leaveRoom', { roomCode }),
-  playerReady: (roomCode)              => socket?.emit('playerReady', { roomCode }),
-  startGame:   (roomCode)              => socket?.emit('startGame', { roomCode }),
-  skipToDoor:  (roomCode)              => socket?.emit('playerSkipToDoor', { roomCode }),
-  chooseDoor:  (roomCode, door)        => socket?.emit('playerChooseDoor', { roomCode, door }),
-  sendChat:    (roomCode, message)     => socket?.emit('chatMessage', { roomCode, message }),
+  createRoom: (opts) => socket?.emit('createRoom', opts),
+  joinRoom: (roomCode, spectate = false) => socket?.emit('joinRoom', { roomCode, spectate }),
+  leaveRoom: (roomCode) => socket?.emit('leaveRoom', { roomCode }),
+  playerReady: (roomCode) => socket?.emit('playerReady', { roomCode }),
+  startGame: (roomCode) => socket?.emit('startGame', { roomCode }),
+  skipToDoor: (roomCode) => socket?.emit('playerSkipToDoor', { roomCode }),
+  chooseDoor: (roomCode, door) => socket?.emit('playerChooseDoor', { roomCode, door }),
+  sendChat: (roomCode, message) => socket?.emit('chatMessage', { roomCode, message }),
 };

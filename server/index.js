@@ -2,24 +2,26 @@
  * Dead or Alive: Logic Escape — Server Entry Point Phase 1
  */
 require('dotenv').config();
-const express  = require('express');
-const http     = require('http');
-const cors     = require('cors');
-const helmet   = require('helmet');
+const express = require('express');
+const http = require('http');
+const cors = require('cors');
+const helmet = require('helmet');
 const mongoose = require('mongoose');
 const { Server } = require('socket.io');
 
-const authRoutes    = require('./routes/auth');
-const gameRoutes    = require('./routes/game');
-const clueRoutes    = require('./routes/clues');
-const settingsRoutes= require('./routes/settings');
+const authRoutes = require('./routes/auth');
+const gameRoutes = require('./routes/game');
+const clueRoutes = require('./routes/clues');
+const settingsRoutes = require('./routes/settings');
 const { statsRouter, adminRouter } = require('./routes/statsAdmin');
-const initSocket    = require('./socket/socketHandlers');
-const { apiLimiter }= require('./middleware/security');
-const GameSettings  = require('./models/GameSettings');
-const logger        = require('./utils/logger');
+const betaRouter = require('./routes/beta');
+const notificationRouter = require('./routes/notifications');
+const initSocket = require('./socket/socketHandlers');
+const { apiLimiter } = require('./middleware/security');
+const GameSettings = require('./models/GameSettings');
+const logger = require('./utils/logger');
 
-const app    = express();
+const app = express();
 const server = http.createServer(app);
 
 // ── Security headers ──────────────────────────────────────────────────────────
@@ -27,11 +29,12 @@ app.use(helmet({ contentSecurityPolicy: false }));
 
 // ── CORS ──────────────────────────────────────────────────────────────────────
 const corsOptions = {
-  origin: (process.env.CLIENT_URL || 'http://localhost:5173').split(',').map(s => s.trim()),
+  origin: (process.env.CLIENT_URL || 'http://localhost:5173,http://localhost:5174').split(',').map(s => s.trim()),
   credentials: true,
-  methods: ['GET','POST','PUT','PATCH','DELETE'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
 };
 app.use(cors(corsOptions));
+app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
@@ -42,17 +45,20 @@ app.use(async (req, res, next) => {
     const settings = await GameSettings.getSingleton();
     if (settings.features.maintenanceMode)
       return res.status(503).json({ error: 'Server under maintenance. Check back soon.' });
-  } catch (_) {}
+  } catch (_) { }
   next();
 });
 
 // ── Routes ────────────────────────────────────────────────────────────────────
-app.use('/api/auth',     apiLimiter, authRoutes);
-app.use('/api/game',     apiLimiter, gameRoutes);
-app.use('/api/clues',    apiLimiter, clueRoutes);
+app.use('/api/auth', apiLimiter, authRoutes);
+app.use('/api/game', apiLimiter, gameRoutes);
+app.use('/api/clues', apiLimiter, clueRoutes);
 app.use('/api/settings', apiLimiter, settingsRoutes);
-app.use('/api/stats',    apiLimiter, statsRouter);
-app.use('/api/admin',    apiLimiter, adminRouter);
+app.use('/api/stats', apiLimiter, statsRouter);
+app.use('/api/admin', apiLimiter, adminRouter);
+app.use('/api/beta', apiLimiter, betaRouter);
+app.use('/api/notifications', apiLimiter, notificationRouter);
+app.use('/api/payments', require('./routes/payments'));
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
@@ -73,8 +79,12 @@ const io = new Server(server, {
   cors: corsOptions,
   pingTimeout: 60000,
   pingInterval: 25000,
-  transports: ['websocket','polling'],
+  transports: ['websocket', 'polling'],
 });
+
+const { startExpiryCron } = require('./utils/subscriptionExpiry');
+startExpiryCron(io);
+
 app.set('io', io);
 initSocket(io);
 

@@ -2,6 +2,12 @@
  * Room Generator — Phase 1
  * Supports 14 categories, difficulty 1-10, admin-controlled curves
  * LIVE door = condition TRUE, DIE door = condition FALSE
+ *
+ * UPDATED: generateRoomSequence now accepts an optional 4th parameter,
+ * roomCountOverride, so callers (like the clan battle system) can request
+ * a specific room count instead of the playerCount-derived default. Fully
+ * backward-compatible — existing 3-arg calls behave identically since the
+ * override defaults to null/falsy and falls through to the original logic.
  */
 const Clue = require('../models/Clue');
 const GameSettings = require('../models/GameSettings');
@@ -768,10 +774,22 @@ function generateAmbientObjects(environment, seed) {
 
 /**
  * Generate full room sequence using admin difficulty curve
+ *
+ * @param {Number} playerCount
+ * @param {Array} excludeClueIds
+ * @param {String|null} curveConfig
+ * @param {Number|null} roomCountOverride — NEW: if provided, use this exact
+ *   room count instead of deriving it from playerCount. Used by the clan
+ *   battle system (GameSettings.clanBattleSettings.roomCount) so a battle's
+ *   shared sequence length is independent of the "1 player" template call
+ *   used to generate it (which would otherwise map to whatever the
+ *   playerCount=1 fallback formula produces).
  */
-async function generateRoomSequence(playerCount, excludeClueIds = [], curveConfig = null) {
+async function generateRoomSequence(playerCount, excludeClueIds = [], curveConfig = null, roomCountOverride = null) {
   const settings = await GameSettings.getSingleton();
-  const roomCount = settings.roomsPerPlayerCount?.get(String(playerCount)) || Math.min(10, Math.max(5, playerCount + 2));
+  const roomCount = roomCountOverride
+    || settings.roomsPerPlayerCount?.get(String(playerCount))
+    || Math.min(10, Math.max(5, playerCount + 2));
 
   // Find active curve
   let curve = null;

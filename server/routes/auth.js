@@ -161,7 +161,7 @@ router.patch('/profile', protect, async (req, res) => {
     for (const k of allowed) if (req.body[k] !== undefined) updates[k] = req.body[k];
     const player = await Player.findByIdAndUpdate(req.player._id, updates, { new: true });
 
-    // Notify the player about profile update
+    // ADD THIS:
     notify(req.app.get('io'), player._id, {
       type: 'profile_updated',
       title: 'Profile updated',
@@ -262,7 +262,7 @@ router.patch('/password', protect, async (req, res) => {
     player.password = newPassword;
     await player.save();
 
-    // Notify the player about password change
+    // ADD THIS (email:true because password changes are security-critical):
     notify(req.app.get('io'), player._id, {
       type: 'password_changed',
       title: 'Password changed',

@@ -100,11 +100,44 @@ adminRouter.get('/players', protect, adminOnly, async (req, res) => {
 });
 
 // Get single player
-adminRouter.get('/players/:id', protect, adminOnly, async (req, res) => {
-  const player = await Player.findById(req.params.id).select('-password -otp -refreshTokens');
-  if (!player) return res.status(404).json({ error: 'Player not found' });
-  res.json({ player });
-});
+adminRouter
+  // .get('/players/:id', protect, adminOnly, async (req, res) => {
+  //   const player = await Player.findById(req.params.id).select('-password -otp -refreshTokens');
+  //   if (!player) return res.status(404).json({ error: 'Player not found' });
+  //   res.json({ player });
+  // });
+  .get('/players/:id/detail', protect, adminOnly, async (req, res) => {
+    try {
+      const player = await Player.findById(req.params.id).select('-password -otp');
+      if (!player) return res.status(404).json({ error: 'Player not found' });
+
+      const Clan = require('../models/Clan');
+      const Match = require('../models/Match');
+
+      const [clan, recentMatches] = await Promise.all([
+        Clan.findOne({ 'members.playerId': player._id }).select('name tag badge members'),
+        Match.find({ 'players.playerId': player._id, status: 'completed' })
+          .sort({ endedAt: -1 }).limit(5)
+          .select('roomCode players endedAt totalRooms mode'),
+      ]);
+
+      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+      const roomsCreatedToday = (player.roomsCreatedAt || []).filter(d => new Date(d).getTime() > cutoff).length;
+      const roomsJoinedToday = (player.roomsJoinedAt || []).filter(d => new Date(d).getTime() > cutoff).length;
+
+      res.json({
+        player,
+        clan: clan ? { _id: clan._id, name: clan.name, tag: clan.tag, badge: clan.badge, role: clan.getRole(player._id) } : null,
+        recentMatches: recentMatches.map(m => ({
+          roomCode: m.roomCode, endedAt: m.endedAt, totalRooms: m.totalRooms, mode: m.mode,
+          result: m.players.find(p => p.playerId?.toString() === player._id.toString()),
+        })),
+        dailyUsage: { roomsCreatedToday, roomsJoinedToday },
+      });
+    } catch (err) {
+      res.status(500).json({ error: 'Failed to load player detail' });
+    }
+  });
 
 // Update player
 // adminRouter.patch('/players/:id', protect, adminOnly, async (req, res) => {

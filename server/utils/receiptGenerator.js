@@ -31,13 +31,13 @@ function generateReceiptPDF(payment, player) {
         .text('PAYMENT RECEIPT', 50, 120);
 
       // ── Receipt meta box ─────────────────────────────────────────────────────────
-      doc.rect(50, 150, 495, 85).stroke('#e5e7eb');
+      doc.rect(50, 150, 495, 70).stroke('#e5e7eb');
       doc.fontSize(9).fillColor('#6b7280').font('Helvetica');
       doc.text('Receipt Number', 65, 165);
       doc.text('Date', 300, 165);
       doc.fontSize(11).fillColor('#111827').font('Helvetica-Bold');
       doc.text(payment.receiptNumber || 'N/A', 65, 178);
-      doc.text(new Date(payment.createdAt).toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' }), 300, 178);
+      doc.text(new Date(payment.createdAt).toLocaleDateString('en-IN', { year:'numeric', month:'long', day:'numeric' }), 300, 178);
 
       doc.fontSize(9).fillColor('#6b7280').font('Helvetica');
       doc.text('Payment ID', 65, 200);

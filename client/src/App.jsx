@@ -22,6 +22,7 @@ import AdminPage from "./pages/AdminPage";
 import NotFoundPage from "./pages/NotFoundPage";
 import BetaGate from "./components/BetaGate";
 import PricingPage from "./pages/PricingPage";
+import ClansPage from "./pages/ClansPage";
 
 import useNotificationStore from "./store/notificationStore";
 
@@ -87,6 +88,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <GamePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/clans"
+            element={
+              <ProtectedRoute>
+                <ClansPage />
               </ProtectedRoute>
             }
           />

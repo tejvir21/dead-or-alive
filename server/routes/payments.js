@@ -149,8 +149,51 @@ router.post('/orders', protect, async (req, res) => {
     res.status(500).json({ error: 'Failed to create payment order' });
   }
 });
+// router.post('/orders', protect, async (req, res) => {
+//   try {
+//     const { plan } = req.body; // 'pro' | 'elite'
+//     if (!['pro', 'elite'].includes(plan)) return res.status(400).json({ error: 'Invalid plan' });
+
+//     const settings = await GameSettings.getSingleton();
+//     const planConfig = settings.subscriptionPlans.find(p => p.name === plan);
+//     if (!planConfig) return res.status(404).json({ error: 'Plan not found' });
+
+//     const amountPaise = Math.round(planConfig.price * 100); // rupees → paise
+
+//     const order = await razorpay.orders.create({
+//       amount: amountPaise,
+//       currency: planConfig.currency || 'INR',
+//       receipt: `order_${Date.now()}_${req.player._id}`,
+//       notes: { playerId: req.player._id.toString(), plan },
+//     });
+
+//     await Payment.create({
+//       playerId: req.player._id,
+//       razorpayOrderId: order.id,
+//       plan,
+//       durationDays: planConfig.durationDays,
+//       amount: amountPaise,
+//       currency: order.currency,
+//       status: 'created',
+//     });
+
+//     res.json({
+//       orderId: order.id,
+//       amount: order.amount,
+//       currency: order.currency,
+//       keyId: process.env.RAZORPAY_KEY_ID, // safe to expose — this is the public key
+//       plan,
+//       planLabel: planConfig.label,
+//     });
+//   } catch (err) {
+//     logger.error('[payments] Order creation failed:', err);
+//     res.status(500).json({ error: 'Failed to create payment order' });
+//   }
+// });
 
 // ── POST /verify — verify signature + activate (client-side confirmation path) ──
+
+
 router.post('/verify', protect, async (req, res) => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;

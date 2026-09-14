@@ -100,60 +100,40 @@ adminRouter.get('/players', protect, adminOnly, async (req, res) => {
 });
 
 // Get single player
-adminRouter
-  // .get('/players/:id', protect, adminOnly, async (req, res) => {
-  //   const player = await Player.findById(req.params.id).select('-password -otp -refreshTokens');
-  //   if (!player) return res.status(404).json({ error: 'Player not found' });
-  //   res.json({ player });
-  // });
-  .get('/players/:id/detail', protect, adminOnly, async (req, res) => {
-    try {
-      const player = await Player.findById(req.params.id).select('-password -otp');
-      if (!player) return res.status(404).json({ error: 'Player not found' });
+adminRouter.get('/players/:id/detail', protect, adminOnly, async (req, res) => {
+  try {
+    const player = await Player.findById(req.params.id).select('-password -otp');
+    if (!player) return res.status(404).json({ error: 'Player not found' });
 
-      const Clan = require('../models/Clan');
-      const Match = require('../models/Match');
+    const Clan = require('../models/Clan');
+    const Match = require('../models/Match');
 
-      const [clan, recentMatches] = await Promise.all([
-        Clan.findOne({ 'members.playerId': player._id }).select('name tag badge members'),
-        Match.find({ 'players.playerId': player._id, status: 'completed' })
-          .sort({ endedAt: -1 }).limit(5)
-          .select('roomCode players endedAt totalRooms mode'),
-      ]);
+    const [clan, recentMatches] = await Promise.all([
+      Clan.findOne({ 'members.playerId': player._id }).select('name tag badge members'),
+      Match.find({ 'players.playerId': player._id, status: 'completed' })
+        .sort({ endedAt: -1 }).limit(5)
+        .select('roomCode players endedAt totalRooms mode'),
+    ]);
 
-      const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-      const roomsCreatedToday = (player.roomsCreatedAt || []).filter(d => new Date(d).getTime() > cutoff).length;
-      const roomsJoinedToday = (player.roomsJoinedAt || []).filter(d => new Date(d).getTime() > cutoff).length;
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const roomsCreatedToday = (player.roomsCreatedAt || []).filter(d => new Date(d).getTime() > cutoff).length;
+    const roomsJoinedToday = (player.roomsJoinedAt || []).filter(d => new Date(d).getTime() > cutoff).length;
 
-      res.json({
-        player,
-        clan: clan ? { _id: clan._id, name: clan.name, tag: clan.tag, badge: clan.badge, role: clan.getRole(player._id) } : null,
-        recentMatches: recentMatches.map(m => ({
-          roomCode: m.roomCode, endedAt: m.endedAt, totalRooms: m.totalRooms, mode: m.mode,
-          result: m.players.find(p => p.playerId?.toString() === player._id.toString()),
-        })),
-        dailyUsage: { roomsCreatedToday, roomsJoinedToday },
-      });
-    } catch (err) {
-      res.status(500).json({ error: 'Failed to load player detail' });
-    }
-  });
+    res.json({
+      player,
+      clan: clan ? { _id: clan._id, name: clan.name, tag: clan.tag, badge: clan.badge, role: clan.getRole(player._id) } : null,
+      recentMatches: recentMatches.map(m => ({
+        roomCode: m.roomCode, endedAt: m.endedAt, totalRooms: m.totalRooms, mode: m.mode,
+        result: m.players.find(p => p.playerId?.toString() === player._id.toString()),
+      })),
+      dailyUsage: { roomsCreatedToday, roomsJoinedToday },
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to load player detail' });
+  }
+});
 
 // Update player
-// adminRouter.patch('/players/:id', protect, adminOnly, async (req, res) => {
-//   try {
-//     const allowed = ['isVerified','role','subscription','preferences','displayName'];
-//     const updates = {};
-//     for (const k of allowed) if (req.body[k] !== undefined) updates[k] = req.body[k];
-
-//     const player = await Player.findByIdAndUpdate(req.params.id, updates, { new: true });
-//     if (!player) return res.status(404).json({ error: 'Player not found' });
-//     await audit(req.player._id, req.player.username, 'UPDATE_PLAYER', `player:${req.params.id}`, updates, req);
-//     res.json({ player });
-//   } catch (err) {
-//     res.status(400).json({ error: err.message });
-//   }
-// });
 adminRouter.patch("/players/:id", protect, adminOnly, async (req, res) => {
   try {
     const player = await Player.findByIdAndUpdate(req.params.id, req.body, {
@@ -182,23 +162,6 @@ adminRouter.patch("/players/:id", protect, adminOnly, async (req, res) => {
 });
 
 // Ban player
-// adminRouter.post('/players/:id/ban', protect, adminOnly, async (req, res) => {
-//   try {
-//     const { reason, durationDays } = req.body;
-//     if (!reason) return res.status(400).json({ error: 'Ban reason required' });
-
-//     const banUntil = durationDays ? new Date(Date.now() + durationDays * 86400000) : null;
-//     const player = await Player.findByIdAndUpdate(req.params.id, {
-//       isBanned: true, banReason: reason, banUntil,
-//     }, { new: true });
-
-//     if (!player) return res.status(404).json({ error: 'Player not found' });
-//     await audit(req.player._id, req.player.username, 'BAN_PLAYER', `player:${req.params.id}`, { reason, durationDays }, req);
-//     res.json({ message: 'Player banned', player });
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
 adminRouter.post("/players/:id/ban", protect, adminOnly, async (req, res) => {
   try {
     const { reason, durationDays } = req.body;
@@ -243,17 +206,6 @@ adminRouter.post("/players/:id/ban", protect, adminOnly, async (req, res) => {
 });
 
 // Unban player
-// adminRouter.post('/players/:id/unban', protect, adminOnly, async (req, res) => {
-//   try {
-//     const player = await Player.findByIdAndUpdate(req.params.id,
-//       { isBanned: false, banReason: null, banUntil: null }, { new: true });
-//     if (!player) return res.status(404).json({ error: 'Player not found' });
-//     await audit(req.player._id, req.player.username, 'UNBAN_PLAYER', `player:${req.params.id}`, {}, req);
-//     res.json({ message: 'Player unbanned', player });
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
 adminRouter.post("/players/:id/unban", protect, adminOnly, async (req, res) => {
   try {
     const player = await Player.findByIdAndUpdate(
@@ -290,25 +242,7 @@ adminRouter.post("/players/:id/unban", protect, adminOnly, async (req, res) => {
 });
 
 // Gift subscription
-// adminRouter.post('/players/:id/subscription', protect, adminOnly, async (req, res) => {
-//   try {
-//     const { plan, durationDays } = req.body;
-//     if (!plan || !durationDays) return res.status(400).json({ error: 'plan and durationDays required' });
-
-//     const endDate = new Date(Date.now() + durationDays * 86400000);
-//     const player = await Player.findByIdAndUpdate(req.params.id, {
-//       subscription: { plan, status: 'gifted', startDate: new Date(), endDate },
-//     }, { new: true });
-
-//     if (!player) return res.status(404).json({ error: 'Player not found' });
-//     await audit(req.player._id, req.player.username, 'GIFT_SUBSCRIPTION', `player:${req.params.id}`, { plan, durationDays }, req);
-//     res.json({ message: 'Subscription gifted', player });
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
-adminRouter.post(
-  "/players/:id/subscription",
+adminRouter.post("/players/:id/subscription",
   protect,
   adminOnly,
   async (req, res) => {

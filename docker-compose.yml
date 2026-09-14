@@ -33,7 +33,9 @@ services:
       PORT: 3001
       MONGODB_URI: mongodb://mongo:27017/dead-or-alive
       JWT_SECRET: ${JWT_SECRET:-change-this-in-production-please}
-      JWT_EXPIRES_IN: 7d
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-this-in-production-please}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
       CLIENT_URL: ${CLIENT_URL:-http://localhost:5173}
       NODE_ENV: production
       ADMIN_IDS: ${ADMIN_IDS:-}

@@ -46,7 +46,7 @@ export default function BetaGate({ children }) {
   const check = async () => {
     try {
       const data = await apiJSON("/beta/check");
-      if (data.allowed) {
+      if (data.allowed || import.meta.env.VITE_BETA_VERSION == "false") {
         setStatus("allowed");
       } else {
         setStatus("denied");
@@ -121,9 +121,7 @@ export default function BetaGate({ children }) {
     );
   }
 
-  const isMainApp = import.meta.env.VITE_BETA_VERSION != "true";
-
-  if (status === "allowed" || isMainApp) return children; // let normal app render
+  if (status === "allowed") return children;
 
   // ── Denied — locked screen with working purchase buttons ────────────────────
   const PLAN_COLORS = {

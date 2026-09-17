@@ -43,11 +43,12 @@ echo -e "\n${BOLD}Setting up environment files...${RESET}"
 
 if [ ! -f server/.env ]; then
   cp server/.env.example server/.env
-  # Generate a random JWT secret
+  # Generate strong random secrets for both access and refresh JWT tokens
   JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
-  sed -i.bak "s/your-super-secret-jwt-key-change-in-production/$JWT_SECRET/" server/.env
+  JWT_REFRESH_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
+  sed -i.bak     -e "s/change-this-to-a-long-random-string/$JWT_SECRET/"     -e "s/change-this-to-another-long-random-string/$JWT_REFRESH_SECRET/"     server/.env
   rm -f server/.env.bak
-  echo -e "  ${GREEN}✓ server/.env created with random JWT_SECRET${RESET}"
+  echo -e "  ${GREEN}✓ server/.env created with random JWT secrets${RESET}"
 else
   echo -e "  ${YELLOW}⚠ server/.env already exists, skipping${RESET}"
 fi

@@ -1,27 +1,26 @@
 /**
  * GameSettings.js — Admin-controlled singleton
- * New: daily limits, auto-start timer, kick system, beta access
+ * Includes: timers, limits, daily limits, auto-start, kick system, beta
+ * access, difficulty curves, feature flags, subscription plans, clan
+ * settings, clan battle settings (async score-based clan-vs-clan).
  */
 const mongoose = require('mongoose');
 
 const gameSettingsSchema = new mongoose.Schema({
   _singleton: { type: Boolean, default: true, unique: true },
 
-  // ── Timers ────────────────────────────────────────────────────────────────
   puzzleTimerSeconds:    { type: Number, default: 30 },
   doorTimerSeconds:      { type: Number, default: 30 },
   countdownSeconds:      { type: Number, default: 5 },
   timerReductionFactor:  { type: Number, default: 0.3 },
   timerReductionEnabled: { type: Boolean, default: true },
 
-  // ── Player limits ─────────────────────────────────────────────────────────
   maxPlayersNormal:       { type: Number, default: 16 },
   maxPlayersVerified:     { type: Number, default: 32 },
   minPlayersToStart:      { type: Number, default: 1 },
   reconnectGraceNormal:   { type: Number, default: 30 },
   reconnectGraceVerified: { type: Number, default: 60 },
 
-  // ── Daily room limits (-1 = unlimited) ────────────────────────────────────
   dailyLimits: {
     free:     { create: { type: Number, default: 3 },  join: { type: Number, default: 10 } },
     verified: { create: { type: Number, default: 8 },  join: { type: Number, default: 25 } },
@@ -29,7 +28,6 @@ const gameSettingsSchema = new mongoose.Schema({
     elite:    { create: { type: Number, default: -1 }, join: { type: Number, default: -1 } },
   },
 
-  // ── Auto-start timer ──────────────────────────────────────────────────────
   autoStartTimer: {
     enabled:         { type: Boolean, default: true },
     defaultDuration: { type: Number,  default: 180 },
@@ -41,7 +39,6 @@ const gameSettingsSchema = new mongoose.Schema({
     },
   },
 
-  // ── Kick system ───────────────────────────────────────────────────────────
   kickSystem: {
     enabled:            { type: Boolean, default: true },
     minimumPlayers:     { type: Number,  default: 3 },
@@ -50,7 +47,6 @@ const gameSettingsSchema = new mongoose.Schema({
     creatorCanKick:     { type: Boolean, default: true },
   },
 
-  // ── Beta access ───────────────────────────────────────────────────────────
   betaAccess: {
     enabled:       { type: Boolean, default: false },
     betaUrl:       { type: String,  default: '' },
@@ -59,7 +55,6 @@ const gameSettingsSchema = new mongoose.Schema({
     lockedMessage: { type: String, default: 'This is a restricted beta version. Subscribe to Pro or Elite to request access.' },
   },
 
-  // ── Difficulty curves ──────────────────────────────────────────────────────
   difficultyCurves: [{
     name:        { type: String, required: true },
     label:       { type: String, required: true },
@@ -69,7 +64,6 @@ const gameSettingsSchema = new mongoose.Schema({
     isDefault:   { type: Boolean, default: false },
   }],
 
-  // ── Feature flags ─────────────────────────────────────────────────────────
   features: {
     maintenanceMode:    { type: Boolean, default: false },
     spectatorMode:      { type: Boolean, default: true },
@@ -78,9 +72,29 @@ const gameSettingsSchema = new mongoose.Schema({
     voteKick:           { type: Boolean, default: true },
     dailyLimitsEnabled: { type: Boolean, default: true },
     autoStartEnabled:   { type: Boolean, default: true },
+    teamModesEnabled:   { type: Boolean, default: true },
+    clanMatchmakingEnabled: { type: Boolean, default: true },
   },
 
-  // ── Subscription plans ─────────────────────────────────────────────────────
+  clanSettings: {
+    maxMembersPerClan: { type: Number, default: 20 },
+    creationTiers:      { type: [String], default: ['pro', 'elite'] },
+    ownedClansLimit: {
+      free:     { type: Number, default: 0 },
+      verified: { type: Number, default: 0 },
+      pro:      { type: Number, default: 1 },
+      elite:    { type: Number, default: 3 },
+    },
+  },
+
+  // ── Clan battles (async score-based clan-vs-clan) ───────────────────────────
+  clanBattleSettings: {
+    challengeExpiryDays: { type: Number, default: 7 },   // unaccepted challenge auto-expires
+    battleWindowHours:   { type: Number, default: 24 },  // once accepted, how long the run window stays open
+    scoringMode:         { type: String, enum: ['sum', 'average', 'best'], default: 'sum' },
+    roomCount:           { type: Number, default: 10 },  // rooms in the shared battle sequence
+  },
+
   subscriptionPlans: [{
     name:            { type: String },
     label:           { type: String },

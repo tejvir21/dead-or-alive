@@ -59,6 +59,7 @@ app.use('/api/admin', apiLimiter, adminRouter);
 app.use('/api/beta', apiLimiter, betaRouter);
 app.use('/api/notifications', apiLimiter, notificationRouter);
 app.use('/api/payments', require('./routes/payments'));
+app.use('/api/clans', require('./routes/clans'));
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));
@@ -84,6 +85,9 @@ const io = new Server(server, {
 
 const { startExpiryCron } = require('./utils/subscriptionExpiry');
 startExpiryCron(io);
+
+const { startClanBattleExpiryCron } = require('./utils/clanBattleExpiry');
+startClanBattleExpiryCron(io);
 
 app.set('io', io);
 initSocket(io);

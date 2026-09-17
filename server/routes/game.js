@@ -8,7 +8,7 @@ const Player = require('../models/Player');
 
 router.get('/lobbies', protect, async (req, res) => {
   try {
-    const lobbies = await Match.find({ status: 'waiting' })
+    const lobbies = await Match.find({ status: 'waiting', isClanBattleRun: { $ne: true } })
       .populate('createdBy', 'username isVerified')
       .select('roomCode maxPlayers minPlayers players createdAt createdBy mode difficultyCurve isPasswordProtected')
       .sort({ createdAt: -1 }).limit(30);
@@ -30,16 +30,42 @@ router.get('/room/:roomCode', protect, async (req, res) => {
   }
 });
 
+// router.get('/history', protect, async (req, res) => {
+//   try {
+//     const matches = await Match.find({ 'players.playerId': req.player._id, status: 'completed' })
+//       .select('roomCode players rooms totalRooms startedAt endedAt winnersCount mode')
+//       .sort({ endedAt: -1 }).limit(20);
+//     res.json({ matches });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// });
+
 router.get('/history', protect, async (req, res) => {
   try {
-    const matches = await Match.find({ 'players.playerId': req.player._id, status: 'completed' })
-      .select('roomCode players rooms totalRooms startedAt endedAt winnersCount mode')
-      .sort({ endedAt: -1 }).limit(20);
-    res.json({ matches });
+    const { page = 1, limit = 15 } = req.query;
+    const filter = { 'players.playerId': req.player._id, status: 'completed' };
+
+    const [matches, total] = await Promise.all([
+      Match.find(filter)
+        .sort({ endedAt: -1, createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(parseInt(limit))
+        .select('roomCode players totalRooms endedAt createdAt winnersCount mode'),
+      Match.countDocuments(filter),
+    ]);
+
+    res.json({
+      matches,
+      total,
+      page: parseInt(page),
+      pages: Math.ceil(total / limit),
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Failed to load match history' });
   }
 });
+
 
 router.get('/daily-usage', protect, async (req, res) => {
   try {

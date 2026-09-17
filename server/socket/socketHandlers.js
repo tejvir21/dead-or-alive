@@ -27,18 +27,18 @@
  */
 require('dotenv').config();
 const jwt = require('jsonwebtoken');
-const Player       = require('../models/Player');
-const Match        = require('../models/Match');
-const Clan         = require('../models/Clan');
+const Player = require('../models/Player');
+const Match = require('../models/Match');
+const Clan = require('../models/Clan');
 const ClanChallenge = require('../models/ClanChallenge');
-const ClanBattle   = require('../models/ClanBattle');
+const ClanBattle = require('../models/ClanBattle');
 const GameSettings = require('../models/GameSettings');
 const { generateRoomSequence, validateDoorChoice } = require('../utils/roomGenerator');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
 const notify = require('../utils/notify');
 
-const activeSessions  = new Map();
+const activeSessions = new Map();
 const reconnectTimers = new Map();
 const playerSocketRegistry = new Map();
 function getPlayerSocketId(playerId) { return playerSocketRegistry.get(playerId) || null; }
@@ -58,44 +58,44 @@ class Team {
 
 class GameSession {
   constructor(matchId, roomCode, createdBy, maxPlayers, minPlayers, difficultyCurve, autoStartDuration, mode, coopSubMode) {
-    this.matchId           = matchId;
-    this.roomCode          = roomCode;
-    this.createdBy         = createdBy;
-    this.maxPlayers        = maxPlayers;
-    this.minPlayers        = minPlayers;
-    this.difficultyCurve   = difficultyCurve || 'stepped';
+    this.matchId = matchId;
+    this.roomCode = roomCode;
+    this.createdBy = createdBy;
+    this.maxPlayers = maxPlayers;
+    this.minPlayers = minPlayers;
+    this.difficultyCurve = difficultyCurve || 'stepped';
     this.autoStartDuration = autoStartDuration || 180;
-    this.status            = 'waiting';
-    this.players           = new Map();
-    this.spectators        = new Set();
-    this.eliminatedSpecs   = new Set();
-    this.rooms             = [];
-    this.currentRoomIndex  = 0;
-    this.roundPhase        = 'idle';
-    this.roundTimer        = null;
-    this.revealTimer       = null;
-    this.choices           = new Map();
-    this.puzzleStartTime   = null;
-    this.doorStartTime     = null;
-    this.autoStartTimer    = null;
-    this.autoStartAt       = null;
-    this.kickVotes         = new Map();
+    this.status = 'waiting';
+    this.players = new Map();
+    this.spectators = new Set();
+    this.eliminatedSpecs = new Set();
+    this.rooms = [];
+    this.currentRoomIndex = 0;
+    this.roundPhase = 'idle';
+    this.roundTimer = null;
+    this.revealTimer = null;
+    this.choices = new Map();
+    this.puzzleStartTime = null;
+    this.doorStartTime = null;
+    this.autoStartTimer = null;
+    this.autoStartAt = null;
+    this.kickVotes = new Map();
 
-    this.mode        = mode || 'solo';
+    this.mode = mode || 'solo';
     this.coopSubMode = coopSubMode || 'unity';
-    this.teams       = new Map();
-    this.teamChat    = [];
+    this.teams = new Map();
+    this.teamChat = [];
 
     this.clanBattleId = null; // NEW: set when this session is a clan-battle solo run
   }
 
-  getAlivePlayers()   { return [...this.players.values()].filter(p => p.alive); }
-  getAllPlayers()      { return [...this.players.values()]; }
-  getReadyPlayers()   { return [...this.players.values()].filter(p => p.ready); }
+  getAlivePlayers() { return [...this.players.values()].filter(p => p.alive); }
+  getAllPlayers() { return [...this.players.values()]; }
+  getReadyPlayers() { return [...this.players.values()].filter(p => p.ready); }
   findByPlayerId(pid) { return [...this.players.values()].find(p => p.playerId === pid) || null; }
-  getCurrentRoom()    { return this.rooms[this.currentRoomIndex] || null; }
-  isTeamMode()        { return this.mode === 'coop' || this.mode === 'vs'; }
-  isSoloGame()        { return this.mode === 'solo' && this.getAllPlayers().length <= 1 && this.spectators.size === 0; }
+  getCurrentRoom() { return this.rooms[this.currentRoomIndex] || null; }
+  isTeamMode() { return this.mode === 'coop' || this.mode === 'vs'; }
+  isSoloGame() { return this.mode === 'solo' && this.getAllPlayers().length <= 1 && this.spectators.size === 0; }
 
   getPlayerTeam(playerId) {
     for (const team of this.teams.values()) if (team.playerIds.has(playerId)) return team;
@@ -171,7 +171,7 @@ async function authenticateSocket(socket, next) {
     const token = (socket.handshake.auth?.token || socket.handshake.headers?.authorization || '').replace('Bearer ', '');
     if (!token) return next(new Error('Authentication required'));
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const player  = await Player.findById(decoded.id).select('-password -otp');
+    const player = await Player.findById(decoded.id).select('-password -otp');
     if (!player) return next(new Error('Player not found'));
     if (player.isBanned && (!player.banUntil || player.banUntil > new Date())) return next(new Error('Account banned'));
     socket.player = player;
@@ -185,26 +185,26 @@ async function authenticateSocket(socket, next) {
 function getPlayerTier(player) {
   const plan = player.subscription?.plan;
   if (plan === 'elite') return 'elite';
-  if (plan === 'pro')   return 'pro';
+  if (plan === 'pro') return 'pro';
   if (player.isVerified) return 'verified';
   return 'free';
 }
 
 async function checkDailyLimit(player, type, settings) {
   if (!settings.features?.dailyLimitsEnabled) return { allowed: true };
-  const tier  = getPlayerTier(player);
-  const lims  = settings.dailyLimits?.[tier] || { create: 3, join: 10 };
+  const tier = getPlayerTier(player);
+  const lims = settings.dailyLimits?.[tier] || { create: 3, join: 10 };
   const limit = type === 'create' ? (lims.create ?? 3) : (lims.join ?? 10);
   if (limit === -1) return { allowed: true, limit: -1 };
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const field  = type === 'create' ? 'roomsCreatedAt' : 'roomsJoinedAt';
+  const field = type === 'create' ? 'roomsCreatedAt' : 'roomsJoinedAt';
   const recent = (player[field] || []).filter(d => new Date(d).getTime() > cutoff);
   return { allowed: recent.length < limit, used: recent.length, limit };
 }
 
 async function recordDailyUsage(playerId, type) {
   try {
-    const field  = type === 'create' ? 'roomsCreatedAt' : 'roomsJoinedAt';
+    const field = type === 'create' ? 'roomsCreatedAt' : 'roomsJoinedAt';
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
     await Player.findByIdAndUpdate(playerId, { $pull: { [field]: { $lt: cutoff } } });
     await Player.findByIdAndUpdate(playerId, { $push: { [field]: new Date() } });
@@ -216,12 +216,12 @@ async function recordDailyUsage(playerId, type) {
 async function calcTimerReduction(session, correctPickers, totalAlive) {
   const settings = await GameSettings.getSingleton();
   if (!settings.timerReductionEnabled) return 0;
-  const factor    = settings.timerReductionFactor || 0.3;
+  const factor = settings.timerReductionFactor || 0.3;
   const doorTimer = settings.doorTimerSeconds || 30;
-  const elapsed   = (Date.now() - (session.doorStartTime || Date.now())) / 1000;
+  const elapsed = (Date.now() - (session.doorStartTime || Date.now())) / 1000;
   const remaining = Math.max(0, doorTimer - elapsed);
-  const speed     = Math.max(0, (doorTimer - elapsed) / doorTimer);
-  const pct       = totalAlive > 0 ? correctPickers / totalAlive : 0;
+  const speed = Math.max(0, (doorTimer - elapsed) / doorTimer);
+  const pct = totalAlive > 0 ? correctPickers / totalAlive : 0;
   return Math.round(remaining * pct * speed * factor);
 }
 
@@ -260,11 +260,11 @@ function clearAutoStartTimer(session) {
 function resolveKickVote(code, io, session, targetPlayerId, settings) {
   const voteObj = session.kickVotes.get(targetPlayerId);
   if (!voteObj) return;
-  const target    = session.findByPlayerId(targetPlayerId);
-  const others    = [...session.players.values()].filter(p => p.playerId !== targetPlayerId);
-  const votesFor  = [...voteObj.votes.values()].filter(v => v).length;
+  const target = session.findByPlayerId(targetPlayerId);
+  const others = [...session.players.values()].filter(p => p.playerId !== targetPlayerId);
+  const votesFor = [...voteObj.votes.values()].filter(v => v).length;
   const threshold = settings.kickSystem?.thresholdPercent ?? 50;
-  const needed    = Math.ceil(others.length * threshold / 100);
+  const needed = Math.ceil(others.length * threshold / 100);
 
   io.to(code).emit('kickVoteUpdate', { targetId: targetPlayerId, target: target?.username, votesFor, votesNeeded: needed, totalEligible: others.length });
 
@@ -282,8 +282,8 @@ function executeKick(code, io, session, targetPlayerId, reason, settings, initia
   const sock = io.sockets.sockets.get(target.socketId);
   if (sock) { sock.emit('youWereKicked', { reason }); sock.leave(code); }
 
-  notify(io, target.playerId, { type: 'kicked_you', title: 'Removed from room', message: `You were removed from room ${code}: ${reason}`, icon: '🚪', meta: { roomCode: code, reason } }).catch(() => {});
-  if (initiatorId) notify(io, initiatorId, { type: 'you_kicked_someone', title: 'Player removed', message: `${target.username} was removed from room ${code}`, icon: '👋', meta: { roomCode: code, username: target.username } }).catch(() => {});
+  notify(io, target.playerId, { type: 'kicked_you', title: 'Removed from room', message: `You were removed from room ${code}: ${reason}`, icon: '🚪', meta: { roomCode: code, reason } }).catch(() => { });
+  if (initiatorId) notify(io, initiatorId, { type: 'you_kicked_someone', title: 'Player removed', message: `${target.username} was removed from room ${code}`, icon: '👋', meta: { roomCode: code, username: target.username } }).catch(() => { });
 
   const team = session.getPlayerTeam(target.playerId);
   if (team) team.playerIds.delete(target.playerId);
@@ -326,10 +326,10 @@ function startCountdown(code, io, session) {
 async function beginGame(code, io, session) {
   try {
     session.status = 'in_progress';
-    const playerIds  = [...session.players.values()].map(p => p.playerId);
-    const players    = await Player.find({ _id: { $in: playerIds } });
+    const playerIds = [...session.players.values()].map(p => p.playerId);
+    const players = await Player.find({ _id: { $in: playerIds } });
     const excludeIds = players.flatMap(p => p.getRecentClueIds ? p.getRecentClueIds() : []);
-    session.rooms    = await generateRoomSequence(session.players.size, excludeIds, session.difficultyCurve);
+    session.rooms = await generateRoomSequence(session.players.size, excludeIds, session.difficultyCurve);
 
     if (session.isTeamMode()) {
       for (const team of session.teams.values()) team.initialSize = team.playerIds.size;
@@ -352,7 +352,7 @@ async function startRoom(code, io, session) {
   for (const p of session.players.values()) p.skippedToDoor = false;
   const room = session.getCurrentRoom();
   if (!room) return endGame(code, io, session);
-  const settings  = await GameSettings.getSingleton();
+  const settings = await GameSettings.getSingleton();
   const timerSecs = settings.puzzleTimerSeconds || 30;
   io.to(code).emit('roomStarted', {
     roomNumber: room.roomNumber, environment: room.environment, clueCategory: room.clueCategory,
@@ -371,7 +371,7 @@ async function startDoorSelection(code, io, session) {
   clearTimeout(session.roundTimer);
   session.roundPhase = 'door_selection';
   session.doorStartTime = Date.now();
-  const settings  = await GameSettings.getSingleton();
+  const settings = await GameSettings.getSingleton();
   const doorTimer = settings.doorTimerSeconds || 30;
   io.to(code).emit('doorSelectionStarted', { timerSeconds: doorTimer, session: session.toPublicState() });
   session.roundTimer = setTimeout(() => {
@@ -408,7 +408,7 @@ async function revealResults(code, io, session) {
     for (const player of session.getAlivePlayers()) {
       results.push({ username: player.username, chosenDoor: anyChoice?.door || null, survived: teamSurvived, wasAuto: !!anyChoice?.auto, teamId: 'A' });
       if (teamSurvived) { player.roomsSurvived++; survivors.push(player.username); }
-      else              { player.alive = false; eliminated.push(player.username); }
+      else { player.alive = false; eliminated.push(player.username); }
     }
     if (team) team.roomsSurvivedScore += teamSurvived ? session.getAlivePlayers().length : 0;
   } else {
@@ -419,7 +419,7 @@ async function revealResults(code, io, session) {
       const teamId = session.isTeamMode() ? session.getPlayerTeam(player.playerId)?.id : undefined;
       results.push({ username: player.username, chosenDoor: choice.door, survived, wasAuto: !!choice.auto, teamId });
       if (survived) { player.roomsSurvived++; survivors.push(player.username); if (teamId) session.teams.get(teamId).roomsSurvivedScore++; }
-      else          { player.alive = false; eliminated.push(player.username); }
+      else { player.alive = false; eliminated.push(player.username); }
     }
   }
 
@@ -606,7 +606,7 @@ async function endGame(code, io, session, winners = [], winningTeamId = null) {
         message: won ? `You survived all ${session.rooms.length} rooms in match ${code}!` : `You survived ${p.roomsSurvived}/${session.rooms.length} rooms in match ${code}.`,
         icon: won ? '🏆' : '💀',
         meta: { roomCode: code, roomsSurvived: p.roomsSurvived, totalRooms: session.rooms.length },
-      }).catch(() => {});
+      }).catch(() => { });
     });
   } else {
     // Clan battle run confirmation notification instead of win/loss framing
@@ -617,7 +617,7 @@ async function endGame(code, io, session, winners = [], winningTeamId = null) {
         type: 'generic', title: '⚔ Battle Run Complete',
         message: `You survived ${p.roomsSurvived}/${session.rooms.length} rooms for your clan. Results are tallied once the battle window closes.`,
         icon: '⚔', meta: { battleId: session.clanBattleId, roomsSurvived: p.roomsSurvived },
-      }).catch(() => {});
+      }).catch(() => { });
     }
   }
 
@@ -689,7 +689,7 @@ async function createClanBattle(io, clanA, clanB) {
       type: 'generic', title: '⚔ Clan Battle Started!',
       message: `${clanA.tag} vs ${clanB.tag} — you have ${bs.battleWindowHours || 24}h to play your run.`,
       icon: '⚔', meta: { battleId: battle._id, clanAId: clanA._id, clanBId: clanB._id },
-    }).catch(() => {});
+    }).catch(() => { });
     if (socketId) io.to(socketId).emit('clanBattleStarted', {
       battleId: battle._id, clanA: { id: clanA._id, tag: clanA.tag }, clanB: { id: clanB._id, tag: clanB.tag }, expiresAt,
     });
@@ -713,18 +713,18 @@ function initSocketHandlers(io) {
         if (settings.features.maintenanceMode) return socket.emit('error', { message: 'Server under maintenance.' });
         if (['coop', 'vs'].includes(mode) && settings.features?.teamModesEnabled === false) return socket.emit('error', { message: 'Team modes are currently disabled.' });
 
-        const fresh   = await Player.findById(socket.player._id);
-        const limChk  = await checkDailyLimit(fresh, 'create', settings);
+        const fresh = await Player.findById(socket.player._id);
+        const limChk = await checkDailyLimit(fresh, 'create', settings);
         if (!limChk.allowed) return socket.emit('error', { message: `Daily create limit (${limChk.used}/${limChk.limit}) reached. Resets in 24h. Upgrade for more.` });
 
-        const tier    = getPlayerTier(fresh);
-        const tl      = settings.autoStartTimer?.tierLimits?.[tier] || { min: 180, max: 180 };
-        const dur     = Math.min(tl.max, Math.max(tl.min, parseInt(autoStartDuration) || settings.autoStartTimer?.defaultDuration || 180));
-        const pmx     = ['elite', 'pro', 'verified'].includes(tier) ? settings.maxPlayersVerified : settings.maxPlayersNormal;
+        const tier = getPlayerTier(fresh);
+        const tl = settings.autoStartTimer?.tierLimits?.[tier] || { min: 180, max: 180 };
+        const dur = Math.min(tl.max, Math.max(tl.min, parseInt(autoStartDuration) || settings.autoStartTimer?.defaultDuration || 180));
+        const pmx = ['elite', 'pro', 'verified'].includes(tier) ? settings.maxPlayersVerified : settings.maxPlayersNormal;
         const safeMax = Math.min(pmx, Math.max(1, parseInt(maxPlayers) || 8));
         const safeMin = Math.min(safeMax, Math.max(1, parseInt(minPlayers) || 1));
         const roomCode = uuidv4().substring(0, 6).toUpperCase();
-        const matchId  = uuidv4();
+        const matchId = uuidv4();
         const validMode = ['solo', 'coop', 'vs'].includes(mode) ? mode : 'solo';
         const validCoopSub = ['unity', 'resilience'].includes(coopSubMode) ? coopSubMode : 'unity';
 
@@ -904,7 +904,7 @@ function initSocketHandlers(io) {
       const settings = await GameSettings.getSingleton();
       if (!settings.kickSystem?.enabled) return socket.emit('error', { message: 'Kick system disabled' });
       const initiator = session.players.get(socket.id);
-      const target    = session.findByPlayerId(targetPlayerId);
+      const target = session.findByPlayerId(targetPlayerId);
       if (!initiator || !target || initiator.playerId === targetPlayerId) return;
       if (session.status === 'waiting' && session.createdBy !== socket.player._id.toString()) return socket.emit('error', { message: 'Only the host can remove players in the waiting room' });
       const minP = settings.kickSystem?.minimumPlayers ?? 3;
@@ -1042,7 +1042,7 @@ function initSocketHandlers(io) {
           socket.emit('clanChallengeResolved', { accepted: true, battleId: battle._id });
         } else {
           await challenge.save();
-          notify(io, challenge.sentBy, { type: 'generic', title: 'Challenge Declined', message: `${targetClan.name} declined your clan challenge.`, icon: '❌' }).catch(() => {});
+          notify(io, challenge.sentBy, { type: 'generic', title: 'Challenge Declined', message: `${targetClan.name} declined your clan challenge.`, icon: '❌' }).catch(() => { });
           socket.emit('clanChallengeResolved', { accepted: false });
         }
       } catch (err) {
@@ -1105,7 +1105,7 @@ function initSocketHandlers(io) {
           return socket.emit('error', { message: 'You have already played your run for this battle' });
 
         const roomCode = uuidv4().substring(0, 6).toUpperCase();
-        const matchId  = uuidv4();
+        const matchId = uuidv4();
         await Match.create({
           matchId, roomCode, maxPlayers: 1, minPlayers: 1, createdBy: socket.player._id,
           players: [{ playerId: socket.player._id, username: socket.player.username, joinedAt: new Date() }],
@@ -1141,6 +1141,15 @@ function initSocketHandlers(io) {
         if (session.spectators.has(socket.id)) { session.spectators.delete(socket.id); break; }
         if (session.eliminatedSpecs.has(socket.id)) { session.eliminatedSpecs.delete(socket.id); break; }
       }
+    });
+
+    socket.on('forceDisconnected', ({ reason }) => {
+      alert(reason || 'Your session was ended by an admin. Please reload the page.');
+      // Optional nicer version instead of a blocking alert(): route to a
+      // dedicated "session ended" screen, or show a toast + auto-redirect to
+      // /login after a few seconds. Whatever matches your existing UX for
+      // other forced-disconnect-style events (e.g. how youWereKicked is
+      // already handled in the waiting room).
     });
   });
 }

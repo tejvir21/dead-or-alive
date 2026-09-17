@@ -21,6 +21,7 @@ import { apiJSON } from "../api/apiClient";
 import OTPModal from "../components/ui/OTPModal";
 import BetaAccessSection from "../components/ui/BetaAccessSection";
 import SubscriptionSection from "../components/ui/SubscriptionSection";
+import { enablePushNotifications, disablePushNotifications, getPushStatus, isPushSupported, getPermissionState } from "../utils/pushClient";
 
 const COUNTRIES = [
   "Afghanistan", "Albania", "Algeria", "Argentina", "Australia", "Austria",
@@ -68,6 +69,34 @@ export default function ProfilePage() {
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyTotal, setHistoryTotal] = useState(0);
+
+  // ── Push notifications ────────────────────────────────────────────────────────
+  const [pushStatus, setPushStatus] = useState({ subscribed: false, deviceCount: 0 });
+  const [pushLoading, setPushLoading] = useState(false);
+  const [pushSupported] = useState(isPushSupported());
+
+  useEffect(() => {
+    if (pushSupported) getPushStatus().then(setPushStatus);
+  }, [pushSupported]);
+
+  const handleTogglePush = async () => {
+    setPushLoading(true);
+    try {
+      if (pushStatus.subscribed) {
+        await disablePushNotifications();
+        showMsg("Push notifications disabled");
+      } else {
+        await enablePushNotifications();
+        showMsg("✅ Push notifications enabled!");
+      }
+      const status = await getPushStatus();
+      setPushStatus(status);
+    } catch (err) {
+      showMsg(err.message, true);
+    } finally {
+      setPushLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (player) {
@@ -282,6 +311,43 @@ export default function ProfilePage() {
                 </p>
               )}
             </div>
+
+            {/* Push notifications */}
+            {pushSupported && (
+              <div className="glass-card p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="font-mono text-xs text-gray-500 uppercase tracking-wider">
+                      Push Notifications
+                    </h2>
+                    <p className="font-mono text-[10px] text-gray-700 mt-1">
+                      Get notified about game invites, clan battles, and results — even when the tab's closed.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleTogglePush}
+                    disabled={pushLoading || getPermissionState() === "denied"}
+                    className={`font-mono text-xs px-3 py-1.5 rounded border transition-colors disabled:opacity-50 ${
+                      pushStatus.subscribed
+                        ? "text-red-400 border-red-800 hover:bg-red-950/30"
+                        : "text-green-400 border-green-800 hover:bg-green-950/30"
+                    }`}
+                  >
+                    {pushLoading ? "…" : pushStatus.subscribed ? "Disable" : "Enable"}
+                  </button>
+                </div>
+                {getPermissionState() === "denied" && (
+                  <p className="font-mono text-[10px] text-yellow-600">
+                    ⚠ Blocked at the browser level — re-enable notifications for this site in your browser settings, then refresh.
+                  </p>
+                )}
+                {pushStatus.subscribed && pushStatus.deviceCount > 1 && (
+                  <p className="font-mono text-[10px] text-gray-700">
+                    Active on {pushStatus.deviceCount} devices/browsers.
+                  </p>
+                )}
+              </div>
+            )}
 
             <BetaAccessSection player={player} />
           </div>

@@ -39,6 +39,39 @@ const EMPTY_CLUE = {
 };
 const PAGE = 50;
 
+const exportCSV = async (endpoint, filename) => {
+  // FIX: apiClient.js (the real source of truth) destructures
+  // `accessToken`, not `token` — if the auth store doesn't also expose a
+  // `token` alias, this was sending "Authorization: Bearer undefined" on
+  // every export request.
+  const { accessToken } = useAuthStore.getState();
+  const res = await fetch(`${import.meta.env.VITE_API_URL}${endpoint}`, {
+    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+  });
+  // FIX: previously called res.blob() unconditionally — a 401/500 JSON
+  // error response would get silently "downloaded" as if it were the
+  // real CSV, no crash, just a file containing an error message instead
+  // of real data.
+  if (!res.ok) {
+    let msg = `Export failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body.error) msg = body.error;
+    } catch (_) {}
+    alert(msg);
+    return;
+  }
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.URL.revokeObjectURL(url);
+};
+
 function StatCard({ label, value, color = "text-green-400", loading }) {
   return (
     <div className="glass-card p-4 text-center">
@@ -2168,77 +2201,85 @@ function PaymentsSection() {
           No transactions found.
         </p>
       ) : (
-        <div className="space-y-2">
-          {payments.map((p) => (
-            <div
-              key={p._id}
-              className="glass-card p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
-            >
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono text-sm font-bold text-white">
-                    {p.playerId?.username || "Unknown"}
-                  </span>
-                  <span className="font-mono text-[10px] text-purple-400 border border-purple-800 px-1 rounded uppercase">
-                    {p.plan}
-                  </span>
-                  <span
-                    className={`font-mono text-[10px] px-1.5 rounded border ${
-                      p.status === "paid"
-                        ? "text-green-400 border-green-800"
-                        : p.status === "refunded"
-                          ? "text-red-400 border-red-800"
-                          : p.status === "cancelled"
-                            ? "text-gray-400 border-gray-700"
-                            : "text-yellow-400 border-yellow-800"
-                    }`}
-                  >
-                    {p.status.toUpperCase()}
-                  </span>
-                </div>
-                <p className="font-mono text-xs text-gray-600 mt-0.5">
-                  {p.playerId?.email}
-                </p>
-                <p className="font-mono text-[10px] text-gray-700 mt-0.5">
-                  {p.receiptNumber || "No receipt"} · ₹
-                  {(p.amount / 100).toFixed(2)} ·{" "}
-                  {new Date(p.createdAt).toLocaleDateString("en-IN")}
-                  {p.razorpayPaymentId && <> · {p.razorpayPaymentId}</>}
-                </p>
-              </div>
-              {p.status === "paid" && (
-                <div className="flex gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => cancelPayment(p)}
-                    className="font-mono text-xs text-gray-400 border border-gray-700 hover:bg-gray-800 px-3 py-1.5 rounded"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={() => setRefundTarget(p)}
-                    className="font-mono text-xs text-red-500 border border-red-900 hover:bg-red-950/30 px-3 py-1.5 rounded"
-                  >
-                    Refund
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
-          {hasMore && (
-            <div className="text-center pt-2">
-              <button
-                onClick={() => {
-                  setPage((p) => p + 1);
-                  load(false);
-                }}
-                disabled={loading}
-                className="btn-secondary text-sm disabled:opacity-50"
+        <>
+          <button
+            onClick={() => exportCSV("/admin/payments/export", "payments.csv")}
+            className="font-mono text-xs text-cyan-400 border border-cyan-800 hover:bg-cyan-950/30 px-3 py-1.5 rounded"
+          >
+            ⬇ Export CSV
+          </button>
+          <div className="space-y-2">
+            {payments.map((p) => (
+              <div
+                key={p._id}
+                className="glass-card p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
               >
-                {loading ? "Loading…" : "Load More"}
-              </button>
-            </div>
-          )}
-        </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono text-sm font-bold text-white">
+                      {p.playerId?.username || "Unknown"}
+                    </span>
+                    <span className="font-mono text-[10px] text-purple-400 border border-purple-800 px-1 rounded uppercase">
+                      {p.plan}
+                    </span>
+                    <span
+                      className={`font-mono text-[10px] px-1.5 rounded border ${
+                        p.status === "paid"
+                          ? "text-green-400 border-green-800"
+                          : p.status === "refunded"
+                            ? "text-red-400 border-red-800"
+                            : p.status === "cancelled"
+                              ? "text-gray-400 border-gray-700"
+                              : "text-yellow-400 border-yellow-800"
+                      }`}
+                    >
+                      {p.status.toUpperCase()}
+                    </span>
+                  </div>
+                  <p className="font-mono text-xs text-gray-600 mt-0.5">
+                    {p.playerId?.email}
+                  </p>
+                  <p className="font-mono text-[10px] text-gray-700 mt-0.5">
+                    {p.receiptNumber || "No receipt"} · ₹
+                    {(p.amount / 100).toFixed(2)} ·{" "}
+                    {new Date(p.createdAt).toLocaleDateString("en-IN")}
+                    {p.razorpayPaymentId && <> · {p.razorpayPaymentId}</>}
+                  </p>
+                </div>
+                {p.status === "paid" && (
+                  <div className="flex gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => cancelPayment(p)}
+                      className="font-mono text-xs text-gray-400 border border-gray-700 hover:bg-gray-800 px-3 py-1.5 rounded"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => setRefundTarget(p)}
+                      className="font-mono text-xs text-red-500 border border-red-900 hover:bg-red-950/30 px-3 py-1.5 rounded"
+                    >
+                      Refund
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+            {hasMore && (
+              <div className="text-center pt-2">
+                <button
+                  onClick={() => {
+                    setPage((p) => p + 1);
+                    load(false);
+                  }}
+                  disabled={loading}
+                  className="btn-secondary text-sm disabled:opacity-50"
+                >
+                  {loading ? "Loading…" : "Load More"}
+                </button>
+              </div>
+            )}
+          </div>
+        </>
       )}
 
       {/* Refund confirmation modal */}
@@ -2371,39 +2412,47 @@ function ClansSection() {
           No clans found.
         </p>
       ) : (
-        <div className="space-y-2">
-          {clans.map((clan) => (
-            <div
-              key={clan._id}
-              className="glass-card p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <span className="text-2xl flex-shrink-0">{clan.badge}</span>
-                <div className="min-w-0">
-                  <p className="font-mono text-sm text-white font-bold truncate">
-                    {clan.name}{" "}
-                    <span className="text-cyan-400">[{clan.tag}]</span>
-                  </p>
-                  <p className="font-mono text-[10px] text-gray-600">
-                    Owner: {clan.owner?.username || "Unknown"} ·{" "}
-                    {clan.memberCount}/{clan.maxMembers} members ·{" "}
-                    {clan.joinPolicy}
-                  </p>
-                  <p className="font-mono text-[10px] text-gray-700">
-                    🏆 {clan.stats?.totalWins || 0} wins ·{" "}
-                    {clan.stats?.totalMatches || 0} matches
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => disband(clan)}
-                className="font-mono text-xs text-red-500 border border-red-900 hover:bg-red-950/30 px-3 py-1.5 rounded flex-shrink-0"
+        <>
+          <button
+            onClick={() => exportCSV("/admin/clans/export", "clans.csv")}
+            className="font-mono text-xs text-cyan-400 border border-cyan-800 hover:bg-cyan-950/30 px-3 py-1.5 rounded"
+          >
+            ⬇ Export CSV
+          </button>
+          <div className="space-y-2">
+            {clans.map((clan) => (
+              <div
+                key={clan._id}
+                className="glass-card p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3"
               >
-                Disband
-              </button>
-            </div>
-          ))}
-        </div>
+                <div className="flex items-center gap-3 min-w-0">
+                  <span className="text-2xl flex-shrink-0">{clan.badge}</span>
+                  <div className="min-w-0">
+                    <p className="font-mono text-sm text-white font-bold truncate">
+                      {clan.name}{" "}
+                      <span className="text-cyan-400">[{clan.tag}]</span>
+                    </p>
+                    <p className="font-mono text-[10px] text-gray-600">
+                      Owner: {clan.owner?.username || "Unknown"} ·{" "}
+                      {clan.memberCount}/{clan.maxMembers} members ·{" "}
+                      {clan.joinPolicy}
+                    </p>
+                    <p className="font-mono text-[10px] text-gray-700">
+                      🏆 {clan.stats?.totalWins || 0} wins ·{" "}
+                      {clan.stats?.totalMatches || 0} matches
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => disband(clan)}
+                  className="font-mono text-xs text-red-500 border border-red-900 hover:bg-red-950/30 px-3 py-1.5 rounded flex-shrink-0"
+                >
+                  Disband
+                </button>
+              </div>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );
@@ -2792,6 +2841,8 @@ function MatchesTab() {
   const [modeFilter, setModeFilter] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   useEffect(() => {
     load(true);
@@ -2860,6 +2911,37 @@ function MatchesTab() {
           <option value="coop">Co-op</option>
           <option value="vs">Vs</option>
         </select>
+      </div>
+
+      <div className="glass-card p-4 flex gap-2 flex-wrap items-center">
+        <input
+          type="date"
+          value={fromDate}
+          onChange={(e) => setFromDate(e.target.value)}
+          placeholder="From date"
+          title="Export matches from this date (inclusive)"
+          className="input-field text-sm w-48"
+        />
+        <input
+          type="date"
+          value={toDate}
+          onChange={(e) => setToDate(e.target.value)}
+          placeholder="To date"
+          title="Export matches up to this date (inclusive)"
+          className="input-field text-sm w-48"
+        />
+
+        <button
+          onClick={() =>
+            exportCSV(
+              `/admin/matches/export?from=${fromDate}&to=${toDate}`,
+              "matches.csv",
+            )
+          }
+          className="font-mono text-xs text-cyan-400 border border-cyan-800 hover:bg-cyan-950/30 px-3 py-1.5 rounded"
+        >
+          ⬇ Export CSV
+        </button>
       </div>
 
       <div className="space-y-2">
@@ -3200,6 +3282,499 @@ function ClanBattlesTab() {
   );
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+function BroadcastTab() {
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+  const [filterTier, setFilterTier] = useState("all");
+  const [onlineOnly, setOnlineOnly] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [result, setResult] = useState("");
+
+  const send = async () => {
+    if (!title.trim() || !message.trim())
+      return setResult("❌ Title and message are required");
+    if (
+      !window.confirm(
+        `Send this to ${filterTier === "all" ? "ALL players" : filterTier + " tier players"}${onlineOnly ? " (online only)" : ""}? This can't be undone.`,
+      )
+    )
+      return;
+    setSending(true);
+    try {
+      const d = await apiJSON("/admin/broadcast", {
+        method: "POST",
+        body: JSON.stringify({ title, message, filterTier, onlineOnly }),
+      });
+      setResult(`✅ ${d.message}`);
+      setTitle("");
+      setMessage("");
+    } catch (err) {
+      setResult(`❌ ${err.message}`);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="glass-card p-5 space-y-4 max-w-xl">
+      <div>
+        <h2 className="font-mono text-xs text-gray-500 uppercase tracking-widest">
+          📢 Broadcast Message
+        </h2>
+        <p className="font-mono text-[10px] text-gray-700 mt-1">
+          Sends an in-app notification + push notification to every matching
+          player. Use sparingly.
+        </p>
+      </div>
+
+      {result && (
+        <p className="font-mono text-xs text-green-400 break-words">{result}</p>
+      )}
+
+      <div>
+        <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+          Title
+        </label>
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          maxLength={80}
+          className="input-field w-full text-sm"
+          placeholder="Server maintenance tonight"
+        />
+      </div>
+      <div>
+        <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+          Message
+        </label>
+        <textarea
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          rows={3}
+          maxLength={300}
+          className="input-field w-full text-sm resize-none"
+          placeholder="We'll be down for 30 minutes starting at 2am UTC…"
+        />
+        <p className="font-mono text-[10px] text-gray-700 mt-1">
+          {message.length}/300
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+            Audience
+          </label>
+          <select
+            value={filterTier}
+            onChange={(e) => setFilterTier(e.target.value)}
+            className="input-field w-full text-sm"
+          >
+            <option value="all">Everyone</option>
+            <option value="free">Free tier only</option>
+            <option value="verified">Verified tier only</option>
+            <option value="pro">Pro tier only</option>
+            <option value="elite">Elite tier only</option>
+          </select>
+        </div>
+        <div className="flex items-end pb-2">
+          <label className="flex items-center gap-2 font-mono text-xs text-gray-500">
+            <input
+              type="checkbox"
+              checked={onlineOnly}
+              onChange={(e) => setOnlineOnly(e.target.checked)}
+            />
+            Online right now only
+          </label>
+        </div>
+      </div>
+
+      <button
+        onClick={send}
+        disabled={sending}
+        className="btn-primary w-full disabled:opacity-50"
+      >
+        {sending ? "SENDING…" : "SEND BROADCAST"}
+      </button>
+    </div>
+  );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+function ErrorLogsTab() {
+  const [logs, setLogs] = useState([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [levelFilter, setLevelFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState(null);
+
+  useEffect(() => {
+    load(true);
+  }, [levelFilter, search]);
+
+  const load = async (reset = false) => {
+    setLoading(true);
+    const p = reset ? 1 : page;
+    try {
+      const params = new URLSearchParams({ page: p, limit: 30 });
+      if (levelFilter) params.set("level", levelFilter);
+      if (search) params.set("search", search);
+      const d = await apiJSON(`/admin/error-logs?${params}`);
+      setLogs((prev) => (reset ? d.logs : [...prev, ...d.logs]));
+      setHasMore(p < d.pages);
+      setPage(p + 1);
+    } catch (_) {
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const clearOld = async () => {
+    if (!window.confirm("Delete all error logs older than 7 days?")) return;
+    try {
+      await apiJSON("/admin/error-logs", {
+        method: "DELETE",
+        body: JSON.stringify({ olderThanDays: 7 }),
+      });
+      load(true);
+    } catch (_) {}
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2 flex-wrap items-center justify-between">
+        <div className="flex gap-2 flex-wrap">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search message…"
+            className="input-field text-sm w-56"
+          />
+          <select
+            value={levelFilter}
+            onChange={(e) => setLevelFilter(e.target.value)}
+            className="input-field text-sm"
+          >
+            <option value="">All levels</option>
+            <option value="error">Error</option>
+            <option value="warn">Warn</option>
+          </select>
+        </div>
+        <button
+          onClick={clearOld}
+          className="font-mono text-xs text-gray-600 hover:text-red-400 border border-gray-800 hover:border-red-900 px-3 py-1.5 rounded"
+        >
+          Clear logs older than 7 days
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        {logs.length === 0 && !loading ? (
+          <p className="font-mono text-xs text-gray-700 text-center py-8">
+            No error logs — either things are running clean, or logging just
+            went live and hasn't caught anything yet.
+          </p>
+        ) : (
+          logs.map((log) => (
+            <button
+              key={log._id}
+              onClick={() => setSelected(log)}
+              className="w-full glass-card p-3 flex items-center justify-between gap-3 text-left hover:border-gray-700 border border-transparent transition-colors"
+            >
+              <span
+                className={`font-mono text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0 ${log.level === "error" ? "text-red-400 border-red-800" : "text-yellow-400 border-yellow-800"}`}
+              >
+                {log.level.toUpperCase()}
+              </span>
+              <span className="font-mono text-xs text-gray-300 truncate flex-1">
+                {log.message}
+              </span>
+              <span className="font-mono text-[10px] text-gray-600 flex-shrink-0">
+                {new Date(log.timestamp).toLocaleString()}
+              </span>
+            </button>
+          ))
+        )}
+        {hasMore && (
+          <div className="text-center pt-2">
+            <button
+              onClick={() => load(false)}
+              disabled={loading}
+              className="btn-secondary text-sm disabled:opacity-50"
+            >
+              {loading ? "Loading…" : "Load More"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            onClick={() => setSelected(null)}
+          />
+          <div className="relative z-10 glass-card p-6 w-full max-w-2xl max-h-[80vh] overflow-y-auto space-y-3">
+            <div className="flex items-center justify-between">
+              <span
+                className={`font-mono text-xs px-2 py-1 rounded border ${selected.level === "error" ? "text-red-400 border-red-800" : "text-yellow-400 border-yellow-800"}`}
+              >
+                {selected.level.toUpperCase()}
+              </span>
+              <button
+                onClick={() => setSelected(null)}
+                className="text-gray-600 hover:text-gray-400 text-xl"
+              >
+                ×
+              </button>
+            </div>
+            <p className="font-mono text-sm text-white">{selected.message}</p>
+            <p className="font-mono text-[10px] text-gray-600">
+              {new Date(selected.timestamp).toLocaleString()}
+            </p>
+            {selected.stack && (
+              <pre className="font-mono text-[10px] text-gray-500 bg-gray-950 border border-gray-800 rounded p-3 overflow-x-auto whitespace-pre-wrap">
+                {selected.stack}
+              </pre>
+            )}
+            {selected.meta && Object.keys(selected.meta).length > 0 && (
+              <div>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-1">
+                  Context
+                </p>
+                <pre className="font-mono text-[10px] text-gray-500 bg-gray-950 border border-gray-800 rounded p-3 overflow-x-auto">
+                  {JSON.stringify(selected.meta, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Lightweight, dependency-free bar chart — no charting library required,
+// matching how lean the rest of this codebase is. Renders a simple
+// horizontal set of bars sized proportionally to the max value. ──────────────
+function MiniBarChart({ data, labelKey, valueKey, color = "bg-green-600", formatValue }) {
+  if (!data || data.length === 0) return <p className="font-mono text-xs text-gray-700">No data for this period.</p>;
+  const max = Math.max(...data.map((d) => d[valueKey]), 1);
+  return (
+    <div className="space-y-1.5">
+      {data.map((d, i) => (
+        <div key={i} className="flex items-center gap-2">
+          <span className="font-mono text-[10px] text-gray-600 w-20 flex-shrink-0 truncate">
+            {d[labelKey]}
+          </span>
+          <div className="flex-1 bg-gray-900 rounded h-4 overflow-hidden">
+            <div
+              className={`h-full ${color} transition-all`}
+              style={{ width: `${Math.max(2, (d[valueKey] / max) * 100)}%` }}
+            />
+          </div>
+          <span className="font-mono text-[10px] text-gray-400 w-16 flex-shrink-0 text-right">
+            {formatValue ? formatValue(d[valueKey]) : d[valueKey]}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Simple sparkline-style time series — a row of proportional-height bars,
+// one per day, with the date range labeled at the ends only (not every
+// single day, to avoid clutter on a 30-90 day range). ──────────────────────
+function MiniTimeSeries({ data, valueKey = "count", color = "bg-blue-600" }) {
+  if (!data || data.length === 0) return <p className="font-mono text-xs text-gray-700">No data for this period.</p>;
+  const max = Math.max(...data.map((d) => d[valueKey]), 1);
+  return (
+    <div>
+      <div className="flex items-end gap-0.5 h-20">
+        {data.map((d, i) => (
+          <div
+            key={i}
+            className={`flex-1 ${color} rounded-t transition-all`}
+            style={{ height: `${Math.max(3, (d[valueKey] / max) * 100)}%` }}
+            title={`${d.date}: ${d[valueKey]}`}
+          />
+        ))}
+      </div>
+      <div className="flex justify-between font-mono text-[9px] text-gray-700 mt-1">
+        <span>{data[0]?.date}</span>
+        <span>{data[data.length - 1]?.date}</span>
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsTab() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(30);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    load();
+  }, [days]);
+
+  const load = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const d = await apiJSON(`/admin/analytics/overview?days=${days}`);
+      setData(d);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const MODE_COLORS = { solo: "bg-blue-600", coop: "bg-cyan-600", vs: "bg-orange-600" };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h2 className="font-mono text-xs text-gray-500 uppercase tracking-widest">
+          📊 Analytics — last {days} days
+        </h2>
+        <div className="flex gap-2">
+          {[7, 30, 90].map((d) => (
+            <button
+              key={d}
+              onClick={() => setDays(d)}
+              className={`font-mono text-xs px-3 py-1.5 rounded border transition-colors ${
+                days === d
+                  ? "bg-green-900/30 border-green-700 text-green-400"
+                  : "border-gray-800 text-gray-600 hover:text-gray-400"
+              }`}
+            >
+              {d}d
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {error && (
+        <p className="font-mono text-xs text-red-400 bg-red-950/30 border border-red-800 px-4 py-2 rounded">
+          ⚠ {error}
+        </p>
+      )}
+
+      {loading ? (
+        <p className="font-mono text-xs text-gray-700 text-center py-12">Loading analytics…</p>
+      ) : data ? (
+        <>
+          {/* Revenue & subscriptions */}
+          <div className="glass-card p-5 space-y-4">
+            <h3 className="font-mono text-xs text-gray-500 uppercase tracking-widest">
+              💳 Revenue & Subscriptions
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <StatCard label="Revenue (period)" value={`₹${(data.revenue.totalRevenue || 0).toLocaleString()}`} color="text-green-400" />
+              <StatCard label="MAU" value={data.activity.mau} color="text-blue-400" />
+              <StatCard
+                label="Day-1 Retention"
+                value={data.activity.day1Retention != null ? `${data.activity.day1Retention}%` : "—"}
+                color="text-purple-400"
+              />
+              <StatCard label="Matches (period)" value={data.gameModes.totalMatches} color="text-orange-400" />
+            </div>
+
+            <div>
+              <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Daily Revenue</p>
+              <MiniTimeSeries data={data.revenue.daily} valueKey="amount" color="bg-green-600" />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Revenue by Plan (period)</p>
+                <MiniBarChart
+                  data={data.revenue.byPlan}
+                  labelKey="plan"
+                  valueKey="revenue"
+                  color="bg-purple-600"
+                  formatValue={(v) => `₹${v.toLocaleString()}`}
+                />
+              </div>
+              <div>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Current Subscribers (all-time)</p>
+                <MiniBarChart
+                  data={data.subscriptions.breakdown}
+                  labelKey="plan"
+                  valueKey="count"
+                  color="bg-yellow-600"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Player activity */}
+          <div className="glass-card p-5 space-y-4">
+            <h3 className="font-mono text-xs text-gray-500 uppercase tracking-widest">
+              👥 Player Activity
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Daily Active Users</p>
+                <MiniTimeSeries data={data.activity.dau} color="bg-blue-600" />
+              </div>
+              <div>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">New Signups</p>
+                <MiniTimeSeries data={data.activity.newSignups} color="bg-cyan-600" />
+              </div>
+            </div>
+            <p className="font-mono text-[9px] text-gray-700">
+              💡 Day-1 retention: % of players who signed up 2-3 days ago who showed any activity since. A rough proxy, not a full cohort analysis.
+            </p>
+          </div>
+
+          {/* Game modes & clan battles */}
+          <div className="glass-card p-5 space-y-4">
+            <h3 className="font-mono text-xs text-gray-500 uppercase tracking-widest">
+              🎮 Game Modes & Clan Battles
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Matches by Mode</p>
+                <MiniBarChart
+                  data={data.gameModes.byMode.map((m) => ({ ...m, color: MODE_COLORS[m.mode] }))}
+                  labelKey="mode"
+                  valueKey="count"
+                  color="bg-blue-600"
+                />
+              </div>
+              <div>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Top Difficulty Curves</p>
+                <MiniBarChart
+                  data={data.gameModes.byCurve}
+                  labelKey="curve"
+                  valueKey="count"
+                  color="bg-red-600"
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <StatCard label="Battles (period)" value={data.clanBattles.total} color="text-orange-400" />
+              <StatCard label="Active Now" value={data.clanBattles.active} color="text-yellow-400" />
+              <StatCard label="Completed" value={data.clanBattles.completed} color="text-green-400" />
+              <StatCard
+                label="Avg Score"
+                value={data.clanBattles.avgScore != null ? data.clanBattles.avgScore : "—"}
+                color="text-purple-400"
+              />
+            </div>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const navigate = useNavigate();
   const { player } = useAuthStore();
@@ -3233,10 +3808,11 @@ export default function AdminPage() {
   const [banTarget, setBanTarget] = useState(null);
   const [giftTarget, setGiftTarget] = useState(null);
 
-  const [logs, setLogs] = useState([]);
-  const [logLoading, setLogLoading] = useState(false);
-  const [logPage, setLogPage] = useState(1);
-  const [logTotal, setLogTotal] = useState(0);
+  // Audit logs
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLogLoading, setAuditLogLoading] = useState(false);
+  const [auditLogPage, setAuditLogPage] = useState(1);
+  const [auditLogTotal, setAuditLogTotal] = useState(0);
 
   useEffect(() => {
     if (player && !player.isAdmin) navigate("/lobby");
@@ -3320,18 +3896,20 @@ export default function AdminPage() {
     }
   }, [playerSearch, playerFilter]);
 
-  const fetchLogs = async (reset = false) => {
-    setLogLoading(true);
-    const p = reset ? 1 : logPage;
-    if (reset) setLogPage(1);
+  // ───────────────────────────────────── Audit Logs ───────────────────────────────────────
+
+  const fetchAuditLogs = async (reset = false) => {
+    setAuditLogLoading(true);
+    const p = reset ? 1 : auditLogPage;
+    if (reset) setAuditLogPage(1);
     try {
       const d = await apiJSON(`/admin/audit-logs?page=${p}&limit=50`);
-      if (reset) setLogs(d.logs || []);
-      else setLogs((prev) => [...prev, ...(d.logs || [])]);
-      setLogTotal(d.total || 0);
+      if (reset) setAuditLogs(d.logs || []);
+      else setAuditLogs((prev) => [...prev, ...(d.logs || [])]);
+      setAuditLogTotal(d.total || 0);
     } catch (_) {
     } finally {
-      setLogLoading(false);
+      setAuditLogLoading(false);
     }
   };
 
@@ -3345,7 +3923,7 @@ export default function AdminPage() {
       fetchClues(true);
     }
     if (tab === "players") fetchPlayers();
-    if (tab === "audit") fetchLogs(true);
+    if (tab === "audit") fetchAuditLogs(true);
   }, [tab]);
   useEffect(() => {
     if (tab === "clues") fetchClues(true);
@@ -3438,6 +4016,9 @@ export default function AdminPage() {
     { id: "audit", label: "Audit Log" },
     { id: "matches", label: "Matches", icon: "🎮" },
     { id: "clanBattles", label: "Clan Battles", icon: "⚔" },
+    { id: "broadcast", label: "Broadcast", icon: "📢" },
+    { id: "errorLogs", label: "Error Logs", icon: "⚠" },
+    { id: "analytics", label: "📊 Analytics" },
   ];
 
   return (
@@ -3860,90 +4441,100 @@ export default function AdminPage() {
                 No players found.
               </p>
             ) : (
-              <div className="space-y-2">
-                {players.map((p) => (
-                  <div
-                    key={p._id}
-                    className="glass-card p-4 flex flex-col sm:flex-row items-start sm:items-center gap-4"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {/* <span className="font-mono text-sm font-bold text-white">
+              <>
+                <button
+                  onClick={() =>
+                    exportCSV("/admin/players/export", "players.csv")
+                  }
+                  className="font-mono text-xs text-cyan-400 border border-cyan-800 hover:bg-cyan-950/30 px-3 py-1.5 rounded"
+                >
+                  ⬇ Export CSV
+                </button>
+                <div className="space-y-2">
+                  {players.map((p) => (
+                    <div
+                      key={p._id}
+                      className="glass-card p-4 flex flex-col sm:flex-row items-start sm:items-center gap-4"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {/* <span className="font-mono text-sm font-bold text-white">
                           {p.username}
                         </span> */}
+                          <button
+                            onClick={() => setDetailPlayerId(p._id)}
+                            className="font-mono text-xs text-cyan-400 hover:underline"
+                          >
+                            {p.username}
+                          </button>
+                          {p.isVerified && (
+                            <span className="font-mono text-[10px] text-yellow-400 border border-yellow-700 px-1 rounded">
+                              ✓ VERIFIED
+                            </span>
+                          )}
+                          {p.isBanned && (
+                            <span className="font-mono text-[10px] text-red-400 border border-red-700 px-1 rounded">
+                              BANNED
+                            </span>
+                          )}
+                          {p.isOnline && (
+                            <span className="font-mono text-[10px] text-green-400 border border-green-800 px-1 rounded">
+                              ● ONLINE
+                            </span>
+                          )}
+                          {p.hasBetaAccess && (
+                            <span className="font-mono text-[10px] text-blue-400 border border-blue-800 px-1 rounded">
+                              🧪 BETA
+                            </span>
+                          )}
+                          {p.subscription?.plan !== "free" && (
+                            <span className="font-mono text-[10px] text-purple-400 border border-purple-700 px-1 rounded uppercase">
+                              {p.subscription.plan}
+                            </span>
+                          )}
+                        </div>
+                        <p className="font-mono text-xs text-gray-500 mt-0.5">
+                          {p.email}
+                        </p>
+                        <p className="font-mono text-[10px] text-gray-700 mt-0.5">
+                          Games: {p.stats?.gamesPlayed || 0} · Wins:{" "}
+                          {p.stats?.wins || 0} · Joined:{" "}
+                          {new Date(p.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="flex gap-2 flex-shrink-0 flex-wrap justify-end">
                         <button
-                          onClick={() => setDetailPlayerId(p._id)}
-                          className="font-mono text-xs text-cyan-400 hover:underline"
+                          onClick={() => toggleVerified(p)}
+                          className={`font-mono text-xs border px-2 py-1.5 rounded transition-colors ${p.isVerified ? "border-gray-700 text-gray-500 hover:border-red-800 hover:text-red-400" : "border-yellow-800 text-yellow-500 hover:bg-yellow-950/30"}`}
                         >
-                          {p.username}
+                          {p.isVerified ? "Unverify" : "Verify"}
                         </button>
-                        {p.isVerified && (
-                          <span className="font-mono text-[10px] text-yellow-400 border border-yellow-700 px-1 rounded">
-                            ✓ VERIFIED
-                          </span>
-                        )}
-                        {p.isBanned && (
-                          <span className="font-mono text-[10px] text-red-400 border border-red-700 px-1 rounded">
-                            BANNED
-                          </span>
-                        )}
-                        {p.isOnline && (
-                          <span className="font-mono text-[10px] text-green-400 border border-green-800 px-1 rounded">
-                            ● ONLINE
-                          </span>
-                        )}
-                        {p.hasBetaAccess && (
-                          <span className="font-mono text-[10px] text-blue-400 border border-blue-800 px-1 rounded">
-                            🧪 BETA
-                          </span>
-                        )}
-                        {p.subscription?.plan !== "free" && (
-                          <span className="font-mono text-[10px] text-purple-400 border border-purple-700 px-1 rounded uppercase">
-                            {p.subscription.plan}
-                          </span>
+                        <button
+                          onClick={() => setGiftTarget(p)}
+                          className="font-mono text-xs border border-purple-800 text-purple-400 hover:bg-purple-950/30 px-2 py-1.5 rounded"
+                        >
+                          🎁 Gift
+                        </button>
+                        {p.isBanned ? (
+                          <button
+                            onClick={() => unbanPlayer(p)}
+                            className="font-mono text-xs border border-green-800 text-green-400 hover:bg-green-950/30 px-2 py-1.5 rounded"
+                          >
+                            Unban
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setBanTarget(p)}
+                            className="font-mono text-xs border border-red-900 text-red-500 hover:bg-red-950/30 px-2 py-1.5 rounded"
+                          >
+                            Ban
+                          </button>
                         )}
                       </div>
-                      <p className="font-mono text-xs text-gray-500 mt-0.5">
-                        {p.email}
-                      </p>
-                      <p className="font-mono text-[10px] text-gray-700 mt-0.5">
-                        Games: {p.stats?.gamesPlayed || 0} · Wins:{" "}
-                        {p.stats?.wins || 0} · Joined:{" "}
-                        {new Date(p.createdAt).toLocaleDateString()}
-                      </p>
                     </div>
-                    <div className="flex gap-2 flex-shrink-0 flex-wrap justify-end">
-                      <button
-                        onClick={() => toggleVerified(p)}
-                        className={`font-mono text-xs border px-2 py-1.5 rounded transition-colors ${p.isVerified ? "border-gray-700 text-gray-500 hover:border-red-800 hover:text-red-400" : "border-yellow-800 text-yellow-500 hover:bg-yellow-950/30"}`}
-                      >
-                        {p.isVerified ? "Unverify" : "Verify"}
-                      </button>
-                      <button
-                        onClick={() => setGiftTarget(p)}
-                        className="font-mono text-xs border border-purple-800 text-purple-400 hover:bg-purple-950/30 px-2 py-1.5 rounded"
-                      >
-                        🎁 Gift
-                      </button>
-                      {p.isBanned ? (
-                        <button
-                          onClick={() => unbanPlayer(p)}
-                          className="font-mono text-xs border border-green-800 text-green-400 hover:bg-green-950/30 px-2 py-1.5 rounded"
-                        >
-                          Unban
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setBanTarget(p)}
-                          className="font-mono text-xs border border-red-900 text-red-500 hover:bg-red-950/30 px-2 py-1.5 rounded"
-                        >
-                          Ban
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         )}
@@ -3952,26 +4543,26 @@ export default function AdminPage() {
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <p className="font-mono text-xs text-gray-600">
-                {logTotal} log entries
+                {auditLogTotal} log entries
               </p>
               <button
-                onClick={() => fetchLogs(true)}
+                onClick={() => fetchAuditLogs(true)}
                 className="font-mono text-xs text-gray-600 hover:text-green-400"
               >
                 ↻ REFRESH
               </button>
             </div>
-            {logLoading && logs.length === 0 ? (
+            {auditLogLoading && auditLogs.length === 0 ? (
               <p className="font-mono text-xs text-gray-700 text-center py-8">
                 Loading…
               </p>
-            ) : logs.length === 0 ? (
+            ) : auditLogs.length === 0 ? (
               <p className="font-mono text-xs text-gray-700 text-center py-8">
                 No audit logs yet.
               </p>
             ) : (
               <div className="space-y-2">
-                {logs.map((log, i) => (
+                {auditLogs.map((log, i) => (
                   <div
                     key={log._id || i}
                     className="glass-card px-4 py-3 flex flex-col sm:flex-row items-start gap-2 sm:gap-4"
@@ -4006,17 +4597,17 @@ export default function AdminPage() {
                     </div>
                   </div>
                 ))}
-                {logTotal > logs.length && (
+                {auditLogTotal > auditLogs.length && (
                   <div className="text-center pt-2">
                     <button
                       onClick={() => {
-                        setLogPage((p) => p + 1);
-                        fetchLogs(false);
+                        setAuditLogPage((p) => p + 1);
+                        fetchAuditLogs(false);
                       }}
-                      disabled={logLoading}
+                      disabled={auditLogLoading}
                       className="btn-secondary text-sm disabled:opacity-50"
                     >
-                      {logLoading ? "Loading…" : "Load More"}
+                      {auditLogLoading ? "Loading…" : "Load More"}
                     </button>
                   </div>
                 )}
@@ -4028,6 +4619,12 @@ export default function AdminPage() {
         {tab === "matches" && <MatchesTab />}
 
         {tab === "clanBattles" && <ClanBattlesTab />}
+
+        {tab === "broadcast" && <BroadcastTab />}
+
+        {tab === "errorLogs" && <ErrorLogsTab />}
+
+        {tab === "analytics" && <AnalyticsTab />}
       </div>
 
       {banTarget && (

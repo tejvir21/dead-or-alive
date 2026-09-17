@@ -13,9 +13,11 @@ const authRoutes = require('./routes/auth');
 const gameRoutes = require('./routes/game');
 const clueRoutes = require('./routes/clues');
 const settingsRoutes = require('./routes/settings');
-const { statsRouter, adminRouter } = require('./routes/statsAdmin');
+const { statsRouter } = require('./routes/statsAdmin');
+const adminRouter = require('./routes/admin');
 const betaRouter = require('./routes/beta');
 const notificationRouter = require('./routes/notifications');
+
 const initSocket = require('./socket/socketHandlers');
 const { apiLimiter } = require('./middleware/security');
 const GameSettings = require('./models/GameSettings');
@@ -60,6 +62,7 @@ app.use('/api/beta', apiLimiter, betaRouter);
 app.use('/api/notifications', apiLimiter, notificationRouter);
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/clans', require('./routes/clans'));
+app.use('/api/push', require('./routes/push'));
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));

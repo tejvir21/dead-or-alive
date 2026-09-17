@@ -28,7 +28,7 @@ export async function apiFetch(pathOrUrl, options = {}) {
   // ── Token expired → refresh once → retry ──────────────────────────────────
   if (res.status === 401) {
     let body = {};
-    try { body = await res.clone().json(); } catch (_) {}
+    try { body = await res.clone().json(); } catch (_) { }
 
     if (body.code === 'TOKEN_EXPIRED') {
       try {

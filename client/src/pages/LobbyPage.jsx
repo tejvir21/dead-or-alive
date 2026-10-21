@@ -251,7 +251,7 @@ export default function LobbyPage() {
               {player?.subscription?.plan &&
                 !["pro", "elite"].includes(player.subscription.plan) && (
                   <span className="font-mono text-[10px] text-cyan-300 border border-cyan-600 px-1.5 py-0.5 rounded uppercase">
-                    {player.subscription.plan}
+                    🌟 {player.subscription.plan}
                   </span>
                 )}
             </div>

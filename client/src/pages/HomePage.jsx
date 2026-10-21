@@ -159,7 +159,30 @@ export default function HomePage() {
               animate={{ opacity: 1 }}
               transition={{ delay: 1 }}
             >
-              <span className="font-mono text-xs text-yellow-500 border border-yellow-800 px-3 py-1 rounded-full">
+              <div className="flex flex-wrap justify-center gap-1.5 mt-1.5">
+                {player?.isVerified && (
+                  <span className="font-mono text-[10px] text-yellow-400 border border-yellow-700 px-1.5 py-0.5 rounded">
+                    ✓ VERIFIED
+                  </span>
+                )}
+                {player?.subscription?.plan === "pro" && (
+                  <span className="font-mono text-[10px] text-purple-400 border border-purple-700 px-1.5 py-0.5 rounded">
+                    ✨ PRO
+                  </span>
+                )}
+                {player?.subscription?.plan === "elite" && (
+                  <span className="font-mono text-[10px] text-yellow-300 border border-yellow-600 px-1.5 py-0.5 rounded">
+                    ⭐ ELITE
+                  </span>
+                )}
+                {player?.subscription?.plan &&
+                  !["pro", "elite"].includes(player.subscription.plan) && (
+                    <span className="font-mono text-[10px] text-cyan-300 border border-cyan-600 px-1.5 py-0.5 rounded uppercase">
+                      🌟 {player.subscription.plan}
+                    </span>
+                  )}
+              </div>
+              {/* <span className="font-mono text-xs text-yellow-500 border border-yellow-800 px-3 py-1 rounded-full">
                 {player.subscription?.plan === "elite"
                   ? "⭐ ELITE"
                   : player.subscription?.plan === "pro"
@@ -167,7 +190,7 @@ export default function HomePage() {
                     : player.isVerified
                       ? "✓ VERIFIED"
                       : ""}
-              </span>
+              </span> */}
             </motion.div>
           )}
       </div>

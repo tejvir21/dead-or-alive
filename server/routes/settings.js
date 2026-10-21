@@ -36,7 +36,9 @@ router.patch('/general', protect, adminOnly, async (req, res) => {
     const allowed = [
       'puzzleTimerSeconds','doorTimerSeconds','countdownSeconds',
       'timerReductionFactor','timerReductionEnabled',
-      'maxPlayersNormal','maxPlayersVerified','minPlayersToStart',
+      // maxPlayersNormal/maxPlayersVerified REMOVED — superseded by
+      // per-tier maxPlayers in GameSettings.tiers, edit via Tier Settings
+      'minPlayersToStart',
       'reconnectGraceNormal','reconnectGraceVerified',
     ];
     const updates = {};
@@ -58,18 +60,14 @@ router.patch('/features', protect, adminOnly, async (req, res) => {
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 
-// ── Daily limits ───────────────────────────────────────────────────────────────
+// ── DEPRECATED — dailyLimits was removed from the schema, superseded
+// entirely by per-tier dailyCreate/dailyJoin in GameSettings.tiers. This
+// used to write to settings.dailyLimits[tier], which no longer exists —
+// left as a clear error rather than letting it throw a raw TypeError. ──────
 router.patch('/daily-limits', protect, adminOnly, async (req, res) => {
-  try {
-    const { tier, create, join } = req.body;
-    if (!['free','verified','pro','elite'].includes(tier)) return res.status(400).json({ error: 'Invalid tier' });
-    const settings = await GameSettings.getSingleton();
-    if (create !== undefined) settings.dailyLimits[tier].create = create;
-    if (join   !== undefined) settings.dailyLimits[tier].join   = join;
-    await settings.save();
-    await logAction(req, 'settings.dailyLimits.update', tier, { create, join });
-    res.json({ settings });
-  } catch (err) { res.status(400).json({ error: err.message }); }
+  return res.status(410).json({
+    error: 'Daily limits moved to Tier Settings — use PATCH /admin/tiers instead (per-tier dailyCreate/dailyJoin fields).',
+  });
 });
 
 // ── Auto-start timer settings ─────────────────────────────────────────────────
@@ -79,16 +77,21 @@ router.patch('/auto-start', protect, adminOnly, async (req, res) => {
     const settings = await GameSettings.getSingleton();
     if (enabled !== undefined) settings.autoStartTimer.enabled = enabled;
     if (defaultDuration !== undefined) settings.autoStartTimer.defaultDuration = defaultDuration;
-    if (tierLimits) {
-      for (const tier of ['free','verified','pro','elite']) {
-        if (tierLimits[tier]) {
-          if (tierLimits[tier].min !== undefined) settings.autoStartTimer.tierLimits[tier].min = tierLimits[tier].min;
-          if (tierLimits[tier].max !== undefined) settings.autoStartTimer.tierLimits[tier].max = tierLimits[tier].max;
-        }
-      }
-    }
     await settings.save();
-    await logAction(req, 'settings.autoStart.update', 'GameSettings', req.body);
+    await logAction(req, 'settings.autoStart.update', 'GameSettings', { enabled, defaultDuration });
+
+    // DEPRECATED: tierLimits used to live at autoStartTimer.tierLimits[tier],
+    // superseded by per-tier autoStartMin/autoStartMax in GameSettings.tiers.
+    // That sub-object no longer exists. Checked AFTER saving above, so any
+    // legitimate enabled/defaultDuration change in this same request still
+    // persists — only the tierLimits portion is rejected.
+    if (tierLimits !== undefined) {
+      return res.status(410).json({
+        error: 'Per-tier auto-start ranges moved to Tier Settings — use PATCH /admin/tiers instead (per-tier autoStartMin/autoStartMax fields). Any enabled/defaultDuration change in this request was still saved.',
+        settings,
+      });
+    }
+
     res.json({ settings });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
@@ -108,11 +111,16 @@ router.patch('/kick-system', protect, adminOnly, async (req, res) => {
 // ── Beta access settings ──────────────────────────────────────────────────────
 router.patch('/beta-access', protect, adminOnly, async (req, res) => {
   try {
-    const allowed = ['enabled','betaUrl','allowElite','allowPro','lockedMessage'];
+    const allowed = ['enabled','betaUrl','lockedMessage'];
+    // allowElite/allowPro REMOVED — superseded by per-tier betaAccess
+    // ('none'/'request'/'auto') in GameSettings.tiers, edit via Tier Settings
     const settings = await GameSettings.getSingleton();
     for (const k of allowed) if (req.body[k] !== undefined) settings.betaAccess[k] = req.body[k];
     await settings.save();
     await logAction(req, 'settings.betaAccess.update', 'GameSettings', req.body);
+    if (req.body.allowElite !== undefined || req.body.allowPro !== undefined) {
+      return res.json({ settings, warning: 'allowElite/allowPro no longer exist — use Tier Settings (PATCH /admin/tiers) per-tier betaAccess field instead. Other changes in this request were saved.' });
+    }
     res.json({ settings });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
@@ -215,9 +223,18 @@ router.post('/plans', protect, adminOnly, async (req, res) => {
       maxPlayersBonus: maxPlayersBonus || 0,
       features: Array.isArray(features) ? features : [],
     });
+
+    // THE fix — without this, a new plan resolves correctly via
+    // getPlayerTier() (returns the real plan name) but getTierSettings()
+    // has nowhere to look it up, silently falling back to 'free' defaults
+    // (logged as an error each time). Clones from 'pro' by default — a
+    // reasonable starting point for a new paid tier, easy to adjust
+    // immediately after in the Tier Settings admin screen.
+    settings.ensureTierForPlan(name, 'pro');
+
     await settings.save();
     await logAction(req, 'settings.plan.create', name, req.body);
-    res.status(201).json({ settings });
+    res.status(201).json({ settings, note: `Tier settings for "${name}" were cloned from Pro — review/adjust them in Tier Settings.` });
   } catch (err) { res.status(400).json({ error: err.message }); }
 });
 

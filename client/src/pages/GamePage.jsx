@@ -200,7 +200,8 @@ export default function GamePage() {
     // If server rejects a solo-game spectate attempt, just go to lobby
     const onError = ({ message }) => {
       useGameStore.getState().showNotification?.(message, "error");
-      if (/solo game/i.test(message || "")) navigateRef.current("/lobby");
+      // if (/solo game/i.test(message || ""))
+      navigateRef.current("/lobby");
     };
 
     socket.on("joinedRoom", onJoined);

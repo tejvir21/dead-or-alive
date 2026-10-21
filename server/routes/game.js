@@ -5,7 +5,9 @@ const Match = require('../models/Match');
 const { v4: uuidv4 } = require('uuid');
 const GameSettings = require('../models/GameSettings');
 const Player = require('../models/Player');
+const { getPlayerTier, getTierSettings } = require('../utils/playerTier');
 
+// Get a list of active lobbies (waiting matches)
 router.get('/lobbies', protect, async (req, res) => {
   try {
     const lobbies = await Match.find({ status: 'waiting', isClanBattleRun: { $ne: true } })
@@ -18,6 +20,7 @@ router.get('/lobbies', protect, async (req, res) => {
   }
 });
 
+// Get match details by room code, excluding correctDoor from rooms
 router.get('/room/:roomCode', protect, async (req, res) => {
   try {
     const match = await Match.findOne({ roomCode: req.params.roomCode.toUpperCase() })
@@ -30,17 +33,7 @@ router.get('/room/:roomCode', protect, async (req, res) => {
   }
 });
 
-// router.get('/history', protect, async (req, res) => {
-//   try {
-//     const matches = await Match.find({ 'players.playerId': req.player._id, status: 'completed' })
-//       .select('roomCode players rooms totalRooms startedAt endedAt winnersCount mode')
-//       .sort({ endedAt: -1 }).limit(20);
-//     res.json({ matches });
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// });
-
+// Get a list of completed matches (history)
 router.get('/history', protect, async (req, res) => {
   try {
     const { page = 1, limit = 15 } = req.query;
@@ -66,15 +59,14 @@ router.get('/history', protect, async (req, res) => {
   }
 });
 
-
+// Get daily usage stats for a player
 router.get('/daily-usage', protect, async (req, res) => {
   try {
     const settings = await GameSettings.getSingleton();
     const player = await Player.findById(req.player._id);
 
-    const plan = player.subscription?.plan;
-    const tier = plan === 'elite' ? 'elite' : plan === 'pro' ? 'pro' : player.isVerified ? 'verified' : 'free';
-    const limits = settings.dailyLimits?.[tier] || { create: 3, join: 10 };
+    const tier = getPlayerTier(player);
+    const tierSettings = getTierSettings(settings, tier);
 
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     const createdRecent = (player.roomsCreatedAt || []).filter(d => new Date(d).getTime() > cutoff);
@@ -82,9 +74,22 @@ router.get('/daily-usage', protect, async (req, res) => {
 
     res.json({
       tier,
-      create: { used: createdRecent.length, limit: limits.create ?? 3 },
-      join: { used: joinedRecent.length, limit: limits.join ?? 10 },
+      create: { used: createdRecent.length, limit: tierSettings.dailyCreate },
+      join: { used: joinedRecent.length, limit: tierSettings.dailyJoin },
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get player's current tier and tier-specific settings
+router.get('/my-tier', protect, async (req, res) => {
+  try {
+    const settings = await GameSettings.getSingleton();
+    const player = await Player.findById(req.player._id);
+    const tier = getPlayerTier(player);
+    const tierSettings = getTierSettings(settings, tier);
+    res.json({ tier, tierSettings });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

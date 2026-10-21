@@ -16,6 +16,7 @@ const { toCSV, sendCSV } = require('../utils/csvExport');
 const logger = require('../utils/logger');
 const notify = require('../utils/notify');
 const AuditLog = require('../models/AuditLog');
+const GameSettings = require('../models/GameSettings');
 
 // ════════════════════════════════════════
 // ADMIN ROUTES
@@ -318,7 +319,9 @@ router.post("/players/:id/subscription",
         {
           "subscription.plan": plan,
           "subscription.status": "active",
-          "subscription.expiresAt": expiresAt,
+          "subscription.startDate": new Date(),
+          "subscription.endDate": expiresAt,
+          "subscription.razorpaySubscriptionId": null,
         },
         { new: true },
       );
@@ -657,10 +660,12 @@ router.get('/analytics/overview', protect, adminOnly, async (req, res) => {
     const [dailyRevenue, byPlan, subscriptionBreakdown] = await Promise.all([
       Payment.aggregate([
         { $match: { status: 'paid', createdAt: { $gte: since } } },
-        { $group: {
+        {
+          $group: {
             _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
             amount: { $sum: '$amount' }, count: { $sum: 1 },
-        }},
+          }
+        },
         { $sort: { _id: 1 } },
       ]),
       Payment.aggregate([
@@ -676,18 +681,22 @@ router.get('/analytics/overview', protect, adminOnly, async (req, res) => {
     const [dauSeries, newSignupsSeries, mau] = await Promise.all([
       Player.aggregate([
         { $match: { lastSeen: { $gte: since } } },
-        { $group: {
+        {
+          $group: {
             _id: { $dateToString: { format: '%Y-%m-%d', date: '$lastSeen' } },
             count: { $sum: 1 },
-        }},
+          }
+        },
         { $sort: { _id: 1 } },
       ]),
       Player.aggregate([
         { $match: { createdAt: { $gte: since } } },
-        { $group: {
+        {
+          $group: {
             _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt' } },
             count: { $sum: 1 },
-        }},
+          }
+        },
         { $sort: { _id: 1 } },
       ]),
       Player.countDocuments({ lastSeen: { $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } }),
@@ -760,5 +769,53 @@ router.get('/analytics/overview', protect, adminOnly, async (req, res) => {
     res.status(500).json({ error: 'Failed to load analytics: ' + err.message });
   }
 });
+
+router.get('/tiers', protect, adminOnly, async (req, res) => {
+  try {
+    const settings = await GameSettings.getSingleton();
+    res.json({ tiers: settings.tiers, availableCurves: settings.difficultyCurves.map(c => c.name) });
+  } catch (err) {
+    logger.error('[admin/tiers] Failed:', { message: err.message, stack: err.stack });
+    res.status(500).json({ error: 'Failed to load tier settings' });
+  }
+});
+
+// PATCH /tiers — update tier settings and sync to legacy fields
+router.patch('/tiers', protect, adminOnly, async (req, res) => {
+  try {
+    const { tiers } = req.body;
+    if (!tiers || typeof tiers !== 'object') return res.status(400).json({ error: 'tiers object is required' });
+
+    const settings = await GameSettings.getSingleton();
+
+    // FIX: settings.tiers is a Mongoose Map, not a plain object —
+    // bracket notation (settings.tiers[tierName]) silently returns
+    // undefined on a Map, which is exactly what made Object.assign throw.
+    // Also FIX: loops over whatever tier names the client actually sent
+    // (Object.keys(tiers)) instead of a hardcoded 4-name list — this is
+    // what makes saving work for "premium" or any future plan name
+    // without ever needing another code change here.
+    for (const tierName of Object.keys(tiers)) {
+      const existing = settings.tiers.get(tierName);
+      const existingPlain = existing ? (existing.toObject ? existing.toObject() : existing) : {};
+      settings.tiers.set(tierName, { ...existingPlain, ...tiers[tierName] });
+    }
+
+    await settings.save();
+
+    const AuditLog = require('../models/AuditLog');
+    await AuditLog.create({
+      adminId: req.player._id, adminName: req.player.username,
+      action: 'settings.tiers.update', target: 'GameSettings',
+      details: { updatedTiers: Object.keys(tiers) },
+    });
+
+    res.json({ tiers: settings.tiers });
+  } catch (err) {
+    logger.error('[admin/tiers PATCH] Failed:', { message: err.message, stack: err.stack });
+    res.status(500).json({ error: 'Failed to update tier settings' });
+  }
+});
+
 
 module.exports = router;

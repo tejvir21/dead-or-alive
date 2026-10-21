@@ -5,6 +5,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -e
 
+PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$PROJECT_ROOT"
+
 BOLD="\033[1m"
 GREEN="\033[32m"
 YELLOW="\033[33m"
@@ -27,21 +30,34 @@ check_cmd() {
 
 check_cmd node
 check_cmd npm
-check_cmd mongod || check_cmd mongosh || true   # MongoDB optional if using Atlas
+
+NODE_MAJOR="$(node -p "Number(process.versions.node.split('.')[0])")"
+if [ "$NODE_MAJOR" -lt 20 ]; then
+  echo -e "  ${RED}✕ Node.js 20 or later is required (found $(node --version))${RESET}"
+  exit 1
+fi
+
+if command -v mongod &>/dev/null || command -v mongosh &>/dev/null; then
+  echo -e "  ${GREEN}✓ MongoDB command found${RESET}"
+else
+  echo -e "  ${YELLOW}⚠ MongoDB command not found — use MongoDB Atlas or start MongoDB before seeding${RESET}"
+fi
 
 # ── 2. Install dependencies ───────────────────────────────────────────────────
 echo -e "\n${BOLD}Installing server dependencies...${RESET}"
-cd server && npm install
-cd ..
+npm --prefix server install
 
 echo -e "${BOLD}Installing client dependencies...${RESET}"
-cd client && npm install
-cd ..
+npm --prefix client install
 
 # ── 3. Create .env files if missing ───────────────────────────────────────────
 echo -e "\n${BOLD}Setting up environment files...${RESET}"
 
 if [ ! -f server/.env ]; then
+  if [ ! -f server/.env.example ]; then
+    echo -e "  ${RED}✕ server/.env.example is missing${RESET}"
+    exit 1
+  fi
   cp server/.env.example server/.env
   # Generate strong random secrets for both access and refresh JWT tokens
   JWT_SECRET=$(node -e "console.log(require('crypto').randomBytes(48).toString('hex'))")
@@ -54,6 +70,10 @@ else
 fi
 
 if [ ! -f client/.env ]; then
+  if [ ! -f client/.env.example ]; then
+    echo -e "  ${RED}✕ client/.env.example is missing${RESET}"
+    exit 1
+  fi
   cp client/.env.example client/.env
   echo -e "  ${GREEN}✓ client/.env created${RESET}"
 else
@@ -62,14 +82,12 @@ fi
 
 # ── 4. Seed database ──────────────────────────────────────────────────────────
 echo -e "\n${BOLD}Seeding clue database...${RESET}"
-echo -e "  ${YELLOW}Note: MongoDB must be running on localhost:27017${RESET}"
+echo -e "  ${YELLOW}Note: MongoDB must be reachable using MONGODB_URI in server/.env${RESET}"
 
-if cd server && node utils/seedClues.js 2>&1; then
+if (cd "$PROJECT_ROOT/server" && npm run seed); then
   echo -e "  ${GREEN}✓ Clues seeded successfully${RESET}"
-  cd ..
 else
-  echo -e "  ${YELLOW}⚠ Seed skipped (MongoDB may not be running yet — run 'npm run seed' later)${RESET}"
-  cd ..
+  echo -e "  ${YELLOW}⚠ Clue seeding failed — check MongoDB and server/.env, then run 'cd server && npm run seed'${RESET}"
 fi
 
 # ── 5. Print instructions ─────────────────────────────────────────────────────

@@ -32,7 +32,7 @@ const logger = require('./logger');
 // anywhere, not just wherever push was intended to fire. Wrapping in
 // try/catch here means a missing optional dependency degrades to
 // "push silently doesn't happen" instead of "the entire app goes down."
-let sendPushToPlayer = async () => {};
+let sendPushToPlayer = async () => { };
 try {
   ({ sendPushToPlayer } = require('./webPush'));
 } catch (err) {
@@ -70,7 +70,7 @@ async function notify(io, playerId, { type, title, message, icon = '🔔', meta 
       const player = await Player.findById(playerId).select('email username');
       if (player?.email) {
         const { sendNotificationEmail } = require('../mailer');
-        sendNotificationEmail(player.email, title, message).catch(err =>
+        sendNotificationEmail(player.email || player.additionalEmail, title, message).catch(err =>
           logger.error('[notify] Email send failed:', err.message)
         );
       }
@@ -85,7 +85,7 @@ async function notify(io, playerId, { type, title, message, icon = '🔔', meta 
       body: message || '',
       url: meta?.roomCode ? `/game/${meta.roomCode}` : meta?.battleId ? '/clans' : '/lobby',
       tag: type || 'general',
-    }).catch(() => {});
+    }).catch(() => { });
 
     return notification;
   } catch (err) {

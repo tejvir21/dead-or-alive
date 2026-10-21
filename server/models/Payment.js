@@ -8,15 +8,16 @@ const paymentSchema = new mongoose.Schema({
   playerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Player', required: true, index: true },
 
   // ── Razorpay identifiers ─────────────────────────────────────────────────────
-  razorpayOrderId:   { type: String, required: true, unique: true },
+  razorpayOrderId: { type: String, required: true, unique: true },
   razorpayPaymentId: { type: String }, // set after successful payment
   razorpaySignature: { type: String }, // set after verification
 
   // ── Plan details ─────────────────────────────────────────────────────────────
-  plan:         { type: String, enum: ['pro', 'elite'], required: true },
+  plan: { type: String, required: true },
+  // plan:         { type: String, enum: ['pro', 'elite'], required: true },
   durationDays: { type: Number, required: true },
-  amount:       { type: Number, required: true }, // in paise (smallest unit, e.g. ₹199 = 19900)
-  currency:     { type: String, default: 'INR' },
+  amount: { type: Number, required: true }, // in paise (smallest unit, e.g. ₹199 = 19900)
+  currency: { type: String, default: 'INR' },
 
   // ── Status lifecycle ─────────────────────────────────────────────────────────
   status: {
@@ -30,15 +31,15 @@ const paymentSchema = new mongoose.Schema({
   receiptEmailedAt: { type: Date },
 
   // ── Cancellation / refund ────────────────────────────────────────────────────
-  cancelledAt:    { type: Date },
-  cancelledBy:    { type: mongoose.Schema.Types.ObjectId, ref: 'Player' }, // self or admin
-  cancelReason:   { type: String },
+  cancelledAt: { type: Date },
+  cancelledBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Player' }, // self or admin
+  cancelReason: { type: String },
   razorpayRefundId: { type: String },
-  refundedAt:     { type: Date },
+  refundedAt: { type: Date },
 
   // ── Subscription window this payment activated ──────────────────────────────
   subscriptionStart: { type: Date },
-  subscriptionEnd:   { type: Date },
+  subscriptionEnd: { type: Date },
 
   // ── Reminder tracking (avoid duplicate reminder emails) ──────────────────────
   expiryReminderSentAt: { type: Date },

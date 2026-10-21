@@ -37,6 +37,7 @@ const { generateRoomSequence, validateDoorChoice } = require('../utils/roomGener
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../utils/logger');
 const notify = require('../utils/notify');
+const { getPlayerTier, getTierSettings } = require('../utils/playerTier');
 
 const activeSessions = new Map();
 const reconnectTimers = new Map();
@@ -57,7 +58,7 @@ class Team {
 }
 
 class GameSession {
-  constructor(matchId, roomCode, createdBy, maxPlayers, minPlayers, difficultyCurve, autoStartDuration, mode, coopSubMode) {
+  constructor(matchId, roomCode, createdBy, maxPlayers, minPlayers, difficultyCurve, autoStartDuration, mode, coopSubMode, roomCount) {
     this.matchId = matchId;
     this.roomCode = roomCode;
     this.createdBy = createdBy;
@@ -70,6 +71,7 @@ class GameSession {
     this.spectators = new Set();
     this.eliminatedSpecs = new Set();
     this.rooms = [];
+    this.roomCount = roomCount;
     this.currentRoomIndex = 0;
     this.roundPhase = 'idle';
     this.roundTimer = null;
@@ -182,19 +184,11 @@ async function authenticateSocket(socket, next) {
   }
 }
 
-function getPlayerTier(player) {
-  const plan = player.subscription?.plan;
-  if (plan === 'elite') return 'elite';
-  if (plan === 'pro') return 'pro';
-  if (player.isVerified) return 'verified';
-  return 'free';
-}
-
 async function checkDailyLimit(player, type, settings) {
   if (!settings.features?.dailyLimitsEnabled) return { allowed: true };
   const tier = getPlayerTier(player);
-  const lims = settings.dailyLimits?.[tier] || { create: 3, join: 10 };
-  const limit = type === 'create' ? (lims.create ?? 3) : (lims.join ?? 10);
+  const lims = getTierSettings(settings, tier);
+  const limit = type === 'create' ? (lims.dailyCreate ?? 3) : (lims.dailyJoin ?? 10);
   if (limit === -1) return { allowed: true, limit: -1 };
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
   const field = type === 'create' ? 'roomsCreatedAt' : 'roomsJoinedAt';
@@ -329,7 +323,8 @@ async function beginGame(code, io, session) {
     const playerIds = [...session.players.values()].map(p => p.playerId);
     const players = await Player.find({ _id: { $in: playerIds } });
     const excludeIds = players.flatMap(p => p.getRecentClueIds ? p.getRecentClueIds() : []);
-    session.rooms = await generateRoomSequence(session.players.size, excludeIds, session.difficultyCurve);
+
+    session.rooms = await generateRoomSequence(session.players.size, excludeIds, session.difficultyCurve, session.roomCount);
 
     if (session.isTeamMode()) {
       for (const team of session.teams.values()) team.initialSize = team.playerIds.size;
@@ -707,7 +702,7 @@ function initSocketHandlers(io) {
     Player.findByIdAndUpdate(socket.player._id, { isOnline: true, lastSeen: new Date() }).exec();
     playerSocketRegistry.set(socket.player._id.toString(), socket.id);
 
-    socket.on('createRoom', async ({ maxPlayers = 8, minPlayers = 1, difficultyCurve, autoStartDuration, mode = 'solo', coopSubMode = 'unity', teamCount = 2 } = {}) => {
+    socket.on('createRoom', async ({ maxPlayers = 8, minPlayers = 1, difficultyCurve, autoStartDuration, mode = 'solo', coopSubMode = 'unity', teamCount = 2, roomCount = null } = {}) => {
       try {
         const settings = await GameSettings.getSingleton();
         if (settings.features.maintenanceMode) return socket.emit('error', { message: 'Server under maintenance.' });
@@ -718,9 +713,10 @@ function initSocketHandlers(io) {
         if (!limChk.allowed) return socket.emit('error', { message: `Daily create limit (${limChk.used}/${limChk.limit}) reached. Resets in 24h. Upgrade for more.` });
 
         const tier = getPlayerTier(fresh);
-        const tl = settings.autoStartTimer?.tierLimits?.[tier] || { min: 180, max: 180 };
+        const tierSettings = getTierSettings(settings, tier);
+        const tl = { min: tierSettings.autoStartMin, max: tierSettings.autoStartMax };
         const dur = Math.min(tl.max, Math.max(tl.min, parseInt(autoStartDuration) || settings.autoStartTimer?.defaultDuration || 180));
-        const pmx = ['elite', 'pro', 'verified'].includes(tier) ? settings.maxPlayersVerified : settings.maxPlayersNormal;
+        const pmx = tierSettings.maxPlayers;
         const safeMax = Math.min(pmx, Math.max(1, parseInt(maxPlayers) || 8));
         const safeMin = Math.min(safeMax, Math.max(1, parseInt(minPlayers) || 1));
         const roomCode = uuidv4().substring(0, 6).toUpperCase();
@@ -728,10 +724,19 @@ function initSocketHandlers(io) {
         const validMode = ['solo', 'coop', 'vs'].includes(mode) ? mode : 'solo';
         const validCoopSub = ['unity', 'resilience'].includes(coopSubMode) ? coopSubMode : 'unity';
 
-        await Match.create({ matchId, roomCode, maxPlayers: safeMax, minPlayers: safeMin, createdBy: socket.player._id, players: [{ playerId: socket.player._id, username: socket.player.username, joinedAt: new Date() }], status: 'waiting', difficultyCurve: difficultyCurve || 'stepped', mode: validMode });
+        const requestedCurve = difficultyCurve || 'stepped';
+        const unlockedCurves = tierSettings.unlockedCurves || [];
+        if (!unlockedCurves.includes(requestedCurve)) {
+          return socket.emit('error', { message: `Your ${tier.toUpperCase()} plan doesn't include the "${requestedCurve}" difficulty curve. Upgrade or pick an unlocked one.` });
+        }
+        const safeCurve = requestedCurve;
+        const safeRoomCount = roomCount ?? null;
+
+        await Match.create({ matchId, roomCode, maxPlayers: safeMax, minPlayers: safeMin, createdBy: socket.player._id, players: [{ playerId: socket.player._id, username: socket.player.username, joinedAt: new Date() }], status: 'waiting', difficultyCurve: safeCurve, mode: validMode });
         await recordDailyUsage(socket.player._id, 'create');
 
-        const session = new GameSession(matchId, roomCode, socket.player._id.toString(), safeMax, safeMin, difficultyCurve, dur, validMode, validCoopSub);
+        const session = new GameSession(matchId, roomCode, socket.player._id.toString(), safeMax, safeMin, safeCurve, dur, validMode, validCoopSub, safeRoomCount);
+
         const creatorClan = await Clan.findOne({ 'members.playerId': socket.player._id });
         const ps = new PlayerState(socket.id, socket.player._id.toString(), socket.player.username, socket.player.isVerified, tier, true, creatorClan?._id?.toString());
         session.players.set(socket.id, ps);
@@ -891,7 +896,8 @@ function initSocketHandlers(io) {
       const settings = await GameSettings.getSingleton();
       const fresh = await Player.findById(socket.player._id);
       const tier = getPlayerTier(fresh);
-      const tl = settings.autoStartTimer?.tierLimits?.[tier] || { min: 180, max: 180 };
+      const tierSettings = getTierSettings(settings, tier);
+      const tl = { min: tierSettings.autoStartMin, max: tierSettings.autoStartMax };
       const clamped = Math.min(tl.max, Math.max(tl.min, parseInt(duration) || 180));
       startAutoStartTimer(code, io, session, clamped);
       socket.emit('autoStartDurationSet', { duration: clamped });
@@ -1141,15 +1147,6 @@ function initSocketHandlers(io) {
         if (session.spectators.has(socket.id)) { session.spectators.delete(socket.id); break; }
         if (session.eliminatedSpecs.has(socket.id)) { session.eliminatedSpecs.delete(socket.id); break; }
       }
-    });
-
-    socket.on('forceDisconnected', ({ reason }) => {
-      alert(reason || 'Your session was ended by an admin. Please reload the page.');
-      // Optional nicer version instead of a blocking alert(): route to a
-      // dedicated "session ended" screen, or show a toast + auto-redirect to
-      // /login after a few seconds. Whatever matches your existing UX for
-      // other forced-disconnect-style events (e.g. how youWereKicked is
-      // already handled in the waiting room).
     });
   });
 }

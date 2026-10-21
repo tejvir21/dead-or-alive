@@ -1,7 +1,6 @@
 version: "3.9"
 
 services:
-  # ── MongoDB ──────────────────────────────────────────────────────────────────
   mongo:
     image: mongo:7
     container_name: doa-mongo
@@ -11,7 +10,7 @@ services:
     environment:
       MONGO_INITDB_DATABASE: dead-or-alive
     ports:
-      - "27017:27017"
+      - "127.0.0.1:27017:27017"
     networks:
       - doa-net
     healthcheck:
@@ -20,7 +19,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Game Server ───────────────────────────────────────────────────────────────
   server:
     build:
       context: ./server
@@ -28,23 +26,48 @@ services:
     container_name: doa-server
     restart: unless-stopped
     depends_on:
-      - mongo
+      mongo:
+        condition: service_healthy
     environment:
       PORT: 3001
       MONGODB_URI: mongodb://mongo:27017/dead-or-alive
-      JWT_SECRET: ${JWT_SECRET:-change-this-in-production-please}
-      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-change-this-in-production-please}
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in the root .env file}"
+      JWT_REFRESH_SECRET: "${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in the root .env file}"
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
       JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
-      CLIENT_URL: ${CLIENT_URL:-http://localhost:5173}
+      CLIENT_URL: ${CLIENT_URL:-http://localhost}
       NODE_ENV: production
       ADMIN_IDS: ${ADMIN_IDS:-}
+      ADMIN_OTP_EMAIL: ${ADMIN_OTP_EMAIL:-}
+      ADMIN_OTP_EMAIL_PASSWORD: ${ADMIN_OTP_EMAIL_PASSWORD:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      FROM_EMAIL: ${FROM_EMAIL:-}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_WHATSAPP_FROM: ${TWILIO_WHATSAPP_FROM:-}
+      TWILIO_SMS_FROM: ${TWILIO_SMS_FROM:-}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
+      SUPPORT_EMAIL: ${SUPPORT_EMAIL:-}
+      OTP_EXPIRES_MINUTES: ${OTP_EXPIRES_MINUTES:-10}
+      OTP_MAX_ATTEMPTS: ${OTP_MAX_ATTEMPTS:-3}
+      OTP_LOCKOUT_MINUTES: ${OTP_LOCKOUT_MINUTES:-30}
+      ACCOUNT_LOCKOUT_ATTEMPTS: ${ACCOUNT_LOCKOUT_ATTEMPTS:-5}
+      ACCOUNT_LOCKOUT_MINUTES: ${ACCOUNT_LOCKOUT_MINUTES:-30}
+      RECONNECT_GRACE_SECONDS_NORMAL: ${RECONNECT_GRACE_SECONDS_NORMAL:-30}
+      RECONNECT_GRACE_SECONDS_VERIFIED: ${RECONNECT_GRACE_SECONDS_VERIFIED:-60}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-}
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     networks:
       - doa-net
 
-  # ── React Client ──────────────────────────────────────────────────────────────
   client:
     build:
       context: ./client
@@ -53,12 +76,12 @@ services:
         VITE_API_URL: ${VITE_API_URL:-http://localhost:3001/api}
         VITE_SOCKET_URL: ${VITE_SOCKET_URL:-http://localhost:3001}
         VITE_BETA_VERSION: ${VITE_BETA_VERSION:-false}
-        VITE_MAIN_APP_URL: ${VITE_MAIN_APP_URL:-http://localhost:5173}
-
+        VITE_MAIN_APP_URL: ${VITE_MAIN_APP_URL:-http://localhost}
     container_name: doa-client
     restart: unless-stopped
     depends_on:
-      - server
+      server:
+        condition: service_healthy
     ports:
       - "80:80"
     networks:

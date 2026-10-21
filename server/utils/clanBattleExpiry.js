@@ -64,16 +64,20 @@ async function finalizeExpiredBattles(io) {
       const bWon = winnerClanId && winnerClanId.toString() === clanB._id.toString();
 
       await Promise.all([
-        Clan.findByIdAndUpdate(clanA._id, { $inc: {
-          'stats.totalMatches': 1, 'stats.totalWins': aWon ? 1 : 0, 'stats.totalRoomsSurvived': roomsSurvivedA,
-          'statsWeekly.matches': 1, 'statsWeekly.wins': aWon ? 1 : 0, 'statsWeekly.roomsSurvived': roomsSurvivedA,
-          'statsMonthly.matches': 1, 'statsMonthly.wins': aWon ? 1 : 0, 'statsMonthly.roomsSurvived': roomsSurvivedA,
-        }}),
-        Clan.findByIdAndUpdate(clanB._id, { $inc: {
-          'stats.totalMatches': 1, 'stats.totalWins': bWon ? 1 : 0, 'stats.totalRoomsSurvived': roomsSurvivedB,
-          'statsWeekly.matches': 1, 'statsWeekly.wins': bWon ? 1 : 0, 'statsWeekly.roomsSurvived': roomsSurvivedB,
-          'statsMonthly.matches': 1, 'statsMonthly.wins': bWon ? 1 : 0, 'statsMonthly.roomsSurvived': roomsSurvivedB,
-        }}),
+        Clan.findByIdAndUpdate(clanA._id, {
+          $inc: {
+            'stats.totalMatches': 1, 'stats.totalWins': aWon ? 1 : 0, 'stats.totalRoomsSurvived': roomsSurvivedA,
+            'statsWeekly.matches': 1, 'statsWeekly.wins': aWon ? 1 : 0, 'statsWeekly.roomsSurvived': roomsSurvivedA,
+            'statsMonthly.matches': 1, 'statsMonthly.wins': aWon ? 1 : 0, 'statsMonthly.roomsSurvived': roomsSurvivedA,
+          }
+        }),
+        Clan.findByIdAndUpdate(clanB._id, {
+          $inc: {
+            'stats.totalMatches': 1, 'stats.totalWins': bWon ? 1 : 0, 'stats.totalRoomsSurvived': roomsSurvivedB,
+            'statsWeekly.matches': 1, 'statsWeekly.wins': bWon ? 1 : 0, 'statsWeekly.roomsSurvived': roomsSurvivedB,
+            'statsMonthly.matches': 1, 'statsMonthly.wins': bWon ? 1 : 0, 'statsMonthly.roomsSurvived': roomsSurvivedB,
+          }
+        }),
       ]);
 
       // Notify every member of both clans
@@ -87,7 +91,7 @@ async function finalizeExpiredBattles(io) {
           type: 'generic', title: '⚔ Clan Battle Complete!',
           message: `${clanA.tag} vs ${clanB.tag}: ${resultText}`,
           icon: '⚔', meta: { battleId: battle._id, clanAScore, clanBScore, winnerClanId },
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       logger.info(`[clanBattleExpiry] Finalized battle ${battle._id}: ${clanA.tag} ${clanAScore} - ${clanBScore} ${clanB.tag}`);
@@ -98,6 +102,20 @@ async function finalizeExpiredBattles(io) {
 }
 
 function startClanBattleExpiryCron(io) {
+
+  // Runs hourly — both jobs are idempotent and cheap to re-check
+  try {
+    finalizeExpiredBattles(io).catch(err => logger.error('[clanBattleExpiry] Initial check failed:', err));
+    expireStaleChallenges().catch(err => logger.error('[clanBattleExpiry] Initial check failed:', err));
+    // removeExpiredBattles(io).catch(err => logger.error('[clanBattleExpiry] Initial check failed:', err));
+    // removeExpiredChallenges(io).catch(err => logger.error('[clanBattleExpiry] Initial check failed:', err));
+    // removeExpiredMatches(io).catch(err => logger.error('[clanBattleExpiry] Initial check failed:', err));
+    // removeExpiredRooms(io).catch(err => logger.error('[clanBattleExpiry] Initial check failed:', err));
+    // removeExpiredClans(io).catch(err => logger.error('[clanBattleExpiry] Initial check failed:', err));
+  } catch (err) {
+    logger.error('[clanBattleExpiry] Initial check failed:', err);
+  }
+
   // Runs hourly — both jobs are idempotent and cheap to re-check
   cron.schedule('0 * * * *', async () => {
     try {

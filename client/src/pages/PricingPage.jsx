@@ -1,6 +1,19 @@
 /**
  * PricingPage.jsx — Dual-purpose: public pricing page + logged-in checkout
  *
+ * FIX: the plan-rendering filter was hardcoded to `['pro', 'elite'].includes(plan.name)`
+ * — same bug class as everywhere else this session (GameSettings schema,
+ * Tier Settings tabs, PATCH /tiers route). Any plan beyond those two exact
+ * names — like "premium" — was silently excluded from ever rendering here,
+ * even though it existed correctly in subscriptionPlans and showed fine in
+ * the admin panel. Removed the name check entirely; the price/durationDays
+ * validity checks already correctly filter out malformed/incomplete plans
+ * without needing to know specific names in advance.
+ *
+ * Also added fallback icon + a distinct fallback color scheme for any plan
+ * name not explicitly listed, so a new plan looks intentional instead of
+ * blank or visually identical to Pro.
+ *
  * - Not logged in: shows pricing cards, "Sign up to subscribe" → /register
  * - Logged in: shows pricing cards with real "Subscribe" buttons that open
  *   the Razorpay checkout modal directly
@@ -54,10 +67,29 @@ export default function PricingPage() {
   };
 
   const PLAN_ICONS = { pro: '✨', elite: '⭐' };
+  const DEFAULT_ICON = '🎯';
   const PLAN_COLORS = {
     pro:   { border: 'border-purple-700', bg: 'bg-purple-950/20', text: 'text-purple-400', btn: 'bg-purple-700 hover:bg-purple-600' },
     elite: { border: 'border-yellow-600', bg: 'bg-yellow-950/20', text: 'text-yellow-400', btn: 'bg-yellow-600 hover:bg-yellow-500' },
   };
+  // FIX: a distinct fallback instead of silently reusing Pro's exact
+  // styling — a plan you've never explicitly styled should still look
+  // like its own thing, not a Pro clone
+  const DEFAULT_COLORS = { border: 'border-cyan-700', bg: 'bg-cyan-950/20', text: 'text-cyan-400', btn: 'bg-cyan-700 hover:bg-cyan-600' };
+
+  // "Best value" badge — highlights whichever plan costs the most, a
+  // reasonable default heuristic since a badge tied to a specific plan
+  // NAME (the old behavior: always 'elite') breaks the moment a
+  // higher-tier plan is added. See my message for the alternative
+  // (an explicit admin-chosen "highlighted" field) if you'd rather pick
+  // this by hand instead of by price.
+  const purchasablePlans = plans.filter(plan =>
+    typeof plan.price === 'number' && plan.price > 0 &&
+    typeof plan.durationDays === 'number' && plan.durationDays > 0
+  );
+  const highestPricedPlanName = purchasablePlans.reduce(
+    (best, p) => (p.price > (best?.price ?? -1) ? p : best), null
+  )?.name;
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
@@ -116,27 +148,23 @@ export default function PricingPage() {
               )}
             </div>
 
-            {plans
-              .filter(plan =>
-                ['pro', 'elite'].includes(plan.name) &&
-                typeof plan.price === 'number' && plan.price > 0 &&
-                typeof plan.durationDays === 'number' && plan.durationDays > 0
-              )
-              .map(plan => {
-              const colors = PLAN_COLORS[plan.name] || PLAN_COLORS.pro;
+            {purchasablePlans.map(plan => {
+              const colors = PLAN_COLORS[plan.name] || DEFAULT_COLORS;
+              const icon = PLAN_ICONS[plan.name] || DEFAULT_ICON;
               const isCurrent = currentPlan === plan.name;
+              const isBestValue = plan.name === highestPricedPlanName;
               return (
                 <motion.div key={plan.name}
                   initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
                   className={`glass-card p-6 space-y-4 border ${colors.border} ${colors.bg} relative`}>
-                  {plan.name === 'elite' && (
+                  {isBestValue && (
                     <span className="absolute -top-3 left-1/2 -translate-x-1/2 font-mono text-[10px] bg-yellow-600 text-black px-3 py-1 rounded-full font-bold">
                       BEST VALUE
                     </span>
                   )}
                   <div>
                     <p className={`font-mono text-xs uppercase tracking-widest ${colors.text}`}>
-                      {PLAN_ICONS[plan.name]} {plan.label}
+                      {icon} {plan.label}
                     </p>
                     <p className="font-display text-3xl font-bold text-white mt-1">
                       ₹{plan.price}

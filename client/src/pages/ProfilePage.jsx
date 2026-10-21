@@ -21,21 +21,84 @@ import { apiJSON } from "../api/apiClient";
 import OTPModal from "../components/ui/OTPModal";
 import BetaAccessSection from "../components/ui/BetaAccessSection";
 import SubscriptionSection from "../components/ui/SubscriptionSection";
-import { enablePushNotifications, disablePushNotifications, getPushStatus, isPushSupported, getPermissionState } from "../utils/pushClient";
+import {
+  enablePushNotifications,
+  disablePushNotifications,
+  getPushStatus,
+  isPushSupported,
+  getPermissionState,
+} from "../utils/pushClient";
 
 const COUNTRIES = [
-  "Afghanistan", "Albania", "Algeria", "Argentina", "Australia", "Austria",
-  "Bangladesh", "Belgium", "Brazil", "Canada", "Chile", "China", "Colombia",
-  "Croatia", "Czech Republic", "Denmark", "Egypt", "Ethiopia", "Finland",
-  "France", "Germany", "Ghana", "Greece", "Hungary", "India", "Indonesia",
-  "Iran", "Iraq", "Ireland", "Israel", "Italy", "Japan", "Jordan", "Kenya",
-  "Malaysia", "Mexico", "Morocco", "Myanmar", "Netherlands", "New Zealand",
-  "Nigeria", "Norway", "Pakistan", "Peru", "Philippines", "Poland",
-  "Portugal", "Romania", "Russia", "Saudi Arabia", "Serbia", "Singapore",
-  "South Africa", "South Korea", "Spain", "Sri Lanka", "Sweden",
-  "Switzerland", "Taiwan", "Tanzania", "Thailand", "Turkey", "Uganda",
-  "Ukraine", "United Arab Emirates", "United Kingdom", "United States",
-  "Vietnam", "Zimbabwe",
+  "Afghanistan",
+  "Albania",
+  "Algeria",
+  "Argentina",
+  "Australia",
+  "Austria",
+  "Bangladesh",
+  "Belgium",
+  "Brazil",
+  "Canada",
+  "Chile",
+  "China",
+  "Colombia",
+  "Croatia",
+  "Czech Republic",
+  "Denmark",
+  "Egypt",
+  "Ethiopia",
+  "Finland",
+  "France",
+  "Germany",
+  "Ghana",
+  "Greece",
+  "Hungary",
+  "India",
+  "Indonesia",
+  "Iran",
+  "Iraq",
+  "Ireland",
+  "Israel",
+  "Italy",
+  "Japan",
+  "Jordan",
+  "Kenya",
+  "Malaysia",
+  "Mexico",
+  "Morocco",
+  "Myanmar",
+  "Netherlands",
+  "New Zealand",
+  "Nigeria",
+  "Norway",
+  "Pakistan",
+  "Peru",
+  "Philippines",
+  "Poland",
+  "Portugal",
+  "Romania",
+  "Russia",
+  "Saudi Arabia",
+  "Serbia",
+  "Singapore",
+  "South Africa",
+  "South Korea",
+  "Spain",
+  "Sri Lanka",
+  "Sweden",
+  "Switzerland",
+  "Taiwan",
+  "Tanzania",
+  "Thailand",
+  "Turkey",
+  "Uganda",
+  "Ukraine",
+  "United Arab Emirates",
+  "United Kingdom",
+  "United States",
+  "Vietnam",
+  "Zimbabwe",
 ];
 
 const GENDERS = [
@@ -57,7 +120,11 @@ export default function ProfilePage() {
   const [error, setError] = useState("");
 
   const [form, setForm] = useState({
-    displayName: "", bio: "", country: "", gender: "", avatar: "survivor",
+    displayName: "",
+    bio: "",
+    country: "",
+    gender: "",
+    avatar: "survivor",
   });
 
   const [pwForm, setPwForm] = useState({ current: "", next: "", confirm: "" });
@@ -70,8 +137,19 @@ export default function ProfilePage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyTotal, setHistoryTotal] = useState(0);
 
+  // ── Support tickets ─────────────────────────────────────────────────────────
+  const [tickets, setTickets] = useState([]);
+  const [ticketsLoading, setTicketsLoading] = useState(false);
+  const [category, setCategory] = useState("other");
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
   // ── Push notifications ────────────────────────────────────────────────────────
-  const [pushStatus, setPushStatus] = useState({ subscribed: false, deviceCount: 0 });
+  const [pushStatus, setPushStatus] = useState({
+    subscribed: false,
+    deviceCount: 0,
+  });
   const [pushLoading, setPushLoading] = useState(false);
   const [pushSupported] = useState(isPushSupported());
 
@@ -118,8 +196,12 @@ export default function ProfilePage() {
     const page = reset ? 1 : historyPage;
     setHistoryLoading(true);
     try {
-      const data = await apiJSON(`/game/history?page=${page}&limit=${HISTORY_PAGE_SIZE}`);
-      setHistory(prev => (reset ? (data.matches || []) : [...prev, ...(data.matches || [])]));
+      const data = await apiJSON(
+        `/game/history?page=${page}&limit=${HISTORY_PAGE_SIZE}`,
+      );
+      setHistory((prev) =>
+        reset ? data.matches || [] : [...prev, ...(data.matches || [])],
+      );
       setHistoryTotal(data.total ?? (data.matches || []).length);
       setHistoryHasMore(page < (data.pages || 1));
       setHistoryPage(page + 1);
@@ -132,7 +214,10 @@ export default function ProfilePage() {
   const showMsg = (m, isError = false) => {
     if (isError) setError(m);
     else setMsg(m);
-    setTimeout(() => { setMsg(""); setError(""); }, 4000);
+    setTimeout(() => {
+      setMsg("");
+      setError("");
+    }, 4000);
   };
 
   const saveProfile = async () => {
@@ -141,80 +226,181 @@ export default function ProfilePage() {
       await apiJSON("/auth/profile", {
         method: "PATCH",
         body: JSON.stringify({
-          displayName: form.displayName, bio: form.bio,
-          country: form.country, gender: form.gender, avatar: form.avatar,
+          displayName: form.displayName,
+          bio: form.bio,
+          country: form.country,
+          gender: form.gender,
+          avatar: form.avatar,
         }),
       });
       await fetchProfile();
       showMsg("✅ Profile saved");
-    } catch (err) { showMsg(err.message, true); }
-    finally { setSaving(false); }
+    } catch (err) {
+      showMsg(err.message, true);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const changePassword = async () => {
     if (!pwForm.current) return showMsg("Current password required", true);
-    if (pwForm.next.length < 8) return showMsg("New password must be at least 8 characters", true);
-    if (pwForm.next !== pwForm.confirm) return showMsg("Passwords do not match", true);
+    if (pwForm.next.length < 8)
+      return showMsg("New password must be at least 8 characters", true);
+    if (pwForm.next !== pwForm.confirm)
+      return showMsg("Passwords do not match", true);
     setSaving(true);
     try {
       await apiJSON("/auth/password", {
         method: "PATCH",
-        body: JSON.stringify({ currentPassword: pwForm.current, newPassword: pwForm.next }),
+        body: JSON.stringify({
+          currentPassword: pwForm.current,
+          newPassword: pwForm.next,
+        }),
       });
       setPwForm({ current: "", next: "", confirm: "" });
       showMsg("✅ Password updated");
-    } catch (err) { showMsg(err.message, true); }
-    finally { setSaving(false); }
+    } catch (err) {
+      showMsg(err.message, true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (tab === "support") fetchTickets();
+  }, [tab]);
+
+  const fetchTickets = async () => {
+    setTicketsLoading(true);
+    try {
+      const data = await apiJSON("/support/mine");
+      setTickets(data.tickets || []);
+    } catch (_) {
+    } finally {
+      setTicketsLoading(false);
+    }
+  };
+
+  const submitTicket = async () => {
+    if (!subject.trim() || !message.trim())
+      return showMsg("Subject and message are required", true);
+    setSubmitting(true);
+    try {
+      await apiJSON("/support", {
+        method: "POST",
+        body: JSON.stringify({ category, subject, message }),
+      });
+      setSubject("");
+      setMessage("");
+      showMsg(
+        "✅ Support ticket submitted — we'll respond by email and here in your history.",
+      );
+      fetchTickets();
+    } catch (err) {
+      showMsg(err.message, true);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (!player) return null;
 
   const stats = player.stats || {};
-  const survivalRate = stats.gamesPlayed ? ((stats.wins / stats.gamesPlayed) * 100).toFixed(1) : "0.0";
+  const survivalRate = stats.gamesPlayed
+    ? ((stats.wins / stats.gamesPlayed) * 100).toFixed(1)
+    : "0.0";
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-2xl mx-auto space-y-6">
         <div>
-          <button onClick={() => navigate("/lobby")} className="font-mono text-xs text-gray-700 hover:text-green-400 mb-2 block transition-colors">
+          <button
+            onClick={() => navigate("/lobby")}
+            className="font-mono text-xs text-gray-700 hover:text-green-400 mb-2 block transition-colors"
+          >
             ← LOBBY
           </button>
           <div className="flex items-center gap-4">
             <div className="w-14 h-14 rounded-full bg-green-900/50 border border-green-700 flex items-center justify-center text-2xl">
-              {player.avatar === "skull" ? "💀" : player.avatar === "ghost" ? "👻" : player.avatar === "shield" ? "🛡️"
-                : player.avatar === "lightning" ? "⚡" : player.avatar === "star" ? "⭐" : player.avatar === "flame" ? "🔥"
-                : player.avatar === "ice" ? "❄️" : "🎮"}
+              {player.avatar === "skull"
+                ? "💀"
+                : player.avatar === "ghost"
+                  ? "👻"
+                  : player.avatar === "shield"
+                    ? "🛡️"
+                    : player.avatar === "lightning"
+                      ? "⚡"
+                      : player.avatar === "star"
+                        ? "⭐"
+                        : player.avatar === "flame"
+                          ? "🔥"
+                          : player.avatar === "ice"
+                            ? "❄️"
+                            : "🎮"}
             </div>
             <div>
-              <h1 className="font-display text-2xl font-bold text-white">{player.displayName || player.username}</h1>
-              <p className="font-mono text-sm text-gray-500">@{player.username}</p>
+              <h1 className="font-display text-2xl font-bold text-white">
+                {player.displayName || player.username}
+              </h1>
+              <p className="font-mono text-sm text-gray-500">
+                @{player.username}
+              </p>
               <div className="flex items-center gap-2 mt-1">
-                {player.isEmailVerified
-                  ? <span className="font-mono text-[10px] text-green-500 border border-green-800 px-1.5 py-0.5 rounded">✓ Email</span>
-                  : <span className="font-mono text-[10px] text-gray-600 border border-gray-800 px-1.5 py-0.5 rounded">✗ Email</span>}
-                {player.isPhoneVerified
-                  ? <span className="font-mono text-[10px] text-green-500 border border-green-800 px-1.5 py-0.5 rounded">✓ Phone</span>
-                  : player.phone
-                    ? <span className="font-mono text-[10px] text-gray-600 border border-gray-800 px-1.5 py-0.5 rounded">✗ Phone</span>
-                    : null}
-                {player.isVerified && <span className="font-mono text-[10px] text-yellow-400 border border-yellow-700 px-1.5 py-0.5 rounded">✓ VERIFIED</span>}
+                {player.isEmailVerified ? (
+                  <span className="font-mono text-[10px] text-green-500 border border-green-800 px-1.5 py-0.5 rounded">
+                    ✓ Email
+                  </span>
+                ) : (
+                  <span className="font-mono text-[10px] text-gray-600 border border-gray-800 px-1.5 py-0.5 rounded">
+                    ✗ Email
+                  </span>
+                )}
+                {player.isPhoneVerified ? (
+                  <span className="font-mono text-[10px] text-green-500 border border-green-800 px-1.5 py-0.5 rounded">
+                    ✓ Phone
+                  </span>
+                ) : player.phone ? (
+                  <span className="font-mono text-[10px] text-gray-600 border border-gray-800 px-1.5 py-0.5 rounded">
+                    ✗ Phone
+                  </span>
+                ) : null}
+                {player.isVerified && (
+                  <span className="font-mono text-[10px] text-yellow-400 border border-yellow-700 px-1.5 py-0.5 rounded">
+                    ✓ VERIFIED
+                  </span>
+                )}
                 {player.subscription?.plan !== "free" && (
-                  <span className="font-mono text-[10px] text-purple-400 border border-purple-700 px-1.5 py-0.5 rounded uppercase">{player.subscription?.plan}</span>
+                  <span className="font-mono text-[10px] text-purple-400 border border-purple-700 px-1.5 py-0.5 rounded uppercase">
+                    {player.subscription?.plan}
+                  </span>
                 )}
               </div>
             </div>
           </div>
         </div>
 
-        {msg && <p className="font-mono text-sm text-green-400 bg-green-950/30 border border-green-800 px-4 py-2 rounded">{msg}</p>}
-        {error && <p className="font-mono text-sm text-red-400 bg-red-950/30 border border-red-800 px-4 py-2 rounded">⚠ {error}</p>}
+        {msg && (
+          <p className="font-mono text-sm text-green-400 bg-green-950/30 border border-green-800 px-4 py-2 rounded">
+            {msg}
+          </p>
+        )}
+        {error && (
+          <p className="font-mono text-sm text-red-400 bg-red-950/30 border border-red-800 px-4 py-2 rounded">
+            ⚠ {error}
+          </p>
+        )}
 
         <div className="flex gap-2">
-          {["profile", "security", "stats", "billing"].map((t) => (
-            <button key={t} onClick={() => setTab(t)}
+          {["profile", "security", "stats", "billing", "support"].map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
               className={`font-mono text-xs px-4 py-2 rounded border uppercase tracking-wider transition-colors ${
-                tab === t ? "bg-green-900/30 border-green-700 text-green-400" : "border-gray-800 text-gray-600 hover:text-gray-400"
-              }`}>
+                tab === t
+                  ? "bg-green-900/30 border-green-700 text-green-400"
+                  : "border-gray-800 text-gray-600 hover:text-gray-400"
+              }`}
+            >
               {t}
             </button>
           ))}
@@ -223,13 +409,30 @@ export default function ProfilePage() {
         {tab === "profile" && (
           <div className="space-y-5">
             <div className="glass-card p-5 space-y-3">
-              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block">Avatar</label>
+              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block">
+                Avatar
+              </label>
               <div className="flex gap-3 flex-wrap">
-                {[["survivor","🎮"],["ghost","👻"],["skull","💀"],["shield","🛡️"],["lightning","⚡"],["star","⭐"],["flame","🔥"],["ice","❄️"]].map(([val, emoji]) => (
-                  <button key={val} type="button" onClick={() => setForm((f) => ({ ...f, avatar: val }))}
+                {[
+                  ["survivor", "🎮"],
+                  ["ghost", "👻"],
+                  ["skull", "💀"],
+                  ["shield", "🛡️"],
+                  ["lightning", "⚡"],
+                  ["star", "⭐"],
+                  ["flame", "🔥"],
+                  ["ice", "❄️"],
+                ].map(([val, emoji]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, avatar: val }))}
                     className={`w-12 h-12 rounded-lg text-2xl border-2 transition-all ${
-                      form.avatar === val ? "border-green-500 bg-green-900/30 scale-110" : "border-gray-800 hover:border-gray-600"
-                    }`}>
+                      form.avatar === val
+                        ? "border-green-500 bg-green-900/30 scale-110"
+                        : "border-gray-800 hover:border-gray-600"
+                    }`}
+                  >
                     {emoji}
                   </button>
                 ))}
@@ -238,76 +441,148 @@ export default function ProfilePage() {
 
             <div className="glass-card p-5 space-y-4">
               <div>
-                <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">Display Name</label>
-                <input value={form.displayName} onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
-                  placeholder={player.username} maxLength={30} className="input-field w-full"/>
+                <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                  Display Name
+                </label>
+                <input
+                  value={form.displayName}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, displayName: e.target.value }))
+                  }
+                  placeholder={player.username}
+                  maxLength={30}
+                  className="input-field w-full"
+                />
               </div>
               <div>
-                <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">Bio</label>
-                <textarea value={form.bio} onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))}
-                  placeholder="Tell other players about yourself…" maxLength={200} rows={3} className="input-field w-full resize-none"/>
-                <p className="font-mono text-[10px] text-gray-700 mt-1">{form.bio.length}/200</p>
+                <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                  Bio
+                </label>
+                <textarea
+                  value={form.bio}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, bio: e.target.value }))
+                  }
+                  placeholder="Tell other players about yourself…"
+                  maxLength={200}
+                  rows={3}
+                  className="input-field w-full resize-none"
+                />
+                <p className="font-mono text-[10px] text-gray-700 mt-1">
+                  {form.bio.length}/200
+                </p>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">Country</label>
-                  <select value={form.country} onChange={(e) => setForm((f) => ({ ...f, country: e.target.value }))} className="input-field w-full">
+                  <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                    Country
+                  </label>
+                  <select
+                    value={form.country}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, country: e.target.value }))
+                    }
+                    className="input-field w-full"
+                  >
                     <option value="">Select…</option>
-                    {COUNTRIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                    {COUNTRIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
                   </select>
                 </div>
                 <div>
-                  <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">Gender</label>
-                  <select value={form.gender} onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value }))} className="input-field w-full">
+                  <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                    Gender
+                  </label>
+                  <select
+                    value={form.gender}
+                    onChange={(e) =>
+                      setForm((f) => ({ ...f, gender: e.target.value }))
+                    }
+                    className="input-field w-full"
+                  >
                     <option value="">Select…</option>
-                    {GENDERS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+                    {GENDERS.map((g) => (
+                      <option key={g.value} value={g.value}>
+                        {g.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
               </div>
-              <button onClick={saveProfile} disabled={saving} className="btn-primary w-full disabled:opacity-50">
+              <button
+                onClick={saveProfile}
+                disabled={saving}
+                className="btn-primary w-full disabled:opacity-50"
+              >
                 {saving ? "SAVING…" : "SAVE CHANGES"}
               </button>
             </div>
 
             <div className="glass-card p-5 space-y-4">
-              <h2 className="font-mono text-xs text-gray-500 uppercase tracking-wider">Verification</h2>
+              <h2 className="font-mono text-xs text-gray-500 uppercase tracking-wider">
+                Verification
+              </h2>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="font-mono text-sm text-white">{player.email}</p>
                   <p className="font-mono text-[10px] text-gray-600">Email</p>
                 </div>
-                {player.isEmailVerified
-                  ? <span className="font-mono text-xs text-green-500 border border-green-800 px-2 py-1 rounded">✓ Verified</span>
-                  : <button onClick={() => setOtpModal({ type: "email", channel: "email" })}
-                      className="font-mono text-xs text-yellow-400 border border-yellow-800 px-3 py-1.5 rounded hover:bg-yellow-950/30 transition-colors">
-                      Verify Email
-                    </button>}
+                {player.isEmailVerified ? (
+                  <span className="font-mono text-xs text-green-500 border border-green-800 px-2 py-1 rounded">
+                    ✓ Verified
+                  </span>
+                ) : (
+                  <button
+                    onClick={() =>
+                      setOtpModal({ type: "email", channel: "email" })
+                    }
+                    className="font-mono text-xs text-yellow-400 border border-yellow-800 px-3 py-1.5 rounded hover:bg-yellow-950/30 transition-colors"
+                  >
+                    Verify Email
+                  </button>
+                )}
               </div>
               {player.phone && (
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-mono text-sm text-white">{player.phone}</p>
+                    <p className="font-mono text-sm text-white">
+                      {player.phone}
+                    </p>
                     <p className="font-mono text-[10px] text-gray-600">Phone</p>
                   </div>
-                  {player.isPhoneVerified
-                    ? <span className="font-mono text-xs text-green-500 border border-green-800 px-2 py-1 rounded">✓ Verified</span>
-                    : (
-                      <div className="flex gap-2">
-                        <button onClick={() => setOtpModal({ type: "phone", channel: "whatsapp" })}
-                          className="font-mono text-xs text-green-400 border border-green-800 px-2 py-1.5 rounded hover:bg-green-950/30">
-                          WhatsApp OTP
-                        </button>
-                        <button onClick={() => setOtpModal({ type: "phone", channel: "sms" })}
-                          className="font-mono text-xs text-blue-400 border border-blue-800 px-2 py-1.5 rounded hover:bg-blue-950/30">
-                          SMS OTP
-                        </button>
-                      </div>
-                    )}
+                  {player.isPhoneVerified ? (
+                    <span className="font-mono text-xs text-green-500 border border-green-800 px-2 py-1 rounded">
+                      ✓ Verified
+                    </span>
+                  ) : (
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() =>
+                          setOtpModal({ type: "phone", channel: "whatsapp" })
+                        }
+                        className="font-mono text-xs text-green-400 border border-green-800 px-2 py-1.5 rounded hover:bg-green-950/30"
+                      >
+                        WhatsApp OTP
+                      </button>
+                      <button
+                        onClick={() =>
+                          setOtpModal({ type: "phone", channel: "sms" })
+                        }
+                        className="font-mono text-xs text-blue-400 border border-blue-800 px-2 py-1.5 rounded hover:bg-blue-950/30"
+                      >
+                        SMS OTP
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {!player.isEmailVerified && (
                 <p className="font-mono text-[10px] text-gray-700">
-                  Verify email + phone to become a verified user and unlock extended features.
+                  Verify email + phone to become a verified user and unlock
+                  extended features.
                 </p>
               )}
             </div>
@@ -321,7 +596,8 @@ export default function ProfilePage() {
                       Push Notifications
                     </h2>
                     <p className="font-mono text-[10px] text-gray-700 mt-1">
-                      Get notified about game invites, clan battles, and results — even when the tab's closed.
+                      Get notified about game invites, clan battles, and results
+                      — even when the tab's closed.
                     </p>
                   </div>
                   <button
@@ -333,12 +609,17 @@ export default function ProfilePage() {
                         : "text-green-400 border-green-800 hover:bg-green-950/30"
                     }`}
                   >
-                    {pushLoading ? "…" : pushStatus.subscribed ? "Disable" : "Enable"}
+                    {pushLoading
+                      ? "…"
+                      : pushStatus.subscribed
+                        ? "Disable"
+                        : "Enable"}
                   </button>
                 </div>
                 {getPermissionState() === "denied" && (
                   <p className="font-mono text-[10px] text-yellow-600">
-                    ⚠ Blocked at the browser level — re-enable notifications for this site in your browser settings, then refresh.
+                    ⚠ Blocked at the browser level — re-enable notifications for
+                    this site in your browser settings, then refresh.
                   </p>
                 )}
                 {pushStatus.subscribed && pushStatus.deviceCount > 1 && (
@@ -355,35 +636,100 @@ export default function ProfilePage() {
 
         {tab === "security" && (
           <div className="glass-card p-5 space-y-4">
-            <h2 className="font-mono text-xs text-gray-500 uppercase tracking-wider">Change Password</h2>
+            <h2 className="font-mono text-xs text-gray-500 uppercase tracking-wider">
+              Change Password
+            </h2>
             <div>
-              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">Current Password</label>
-              <input type="password" value={pwForm.current} onChange={(e) => setPwForm((f) => ({ ...f, current: e.target.value }))} className="input-field w-full"/>
+              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                Current Password
+              </label>
+              <input
+                type="password"
+                value={pwForm.current}
+                onChange={(e) =>
+                  setPwForm((f) => ({ ...f, current: e.target.value }))
+                }
+                className="input-field w-full"
+              />
             </div>
             <div>
-              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">New Password</label>
-              <input type="password" value={pwForm.next} onChange={(e) => setPwForm((f) => ({ ...f, next: e.target.value }))}
-                placeholder="Min 8 chars, uppercase, number, symbol" className="input-field w-full"/>
+              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                New Password
+              </label>
+              <input
+                type="password"
+                value={pwForm.next}
+                onChange={(e) =>
+                  setPwForm((f) => ({ ...f, next: e.target.value }))
+                }
+                placeholder="Min 8 chars, uppercase, number, symbol"
+                className="input-field w-full"
+              />
             </div>
             <div>
-              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">Confirm New Password</label>
-              <input type="password" value={pwForm.confirm} onChange={(e) => setPwForm((f) => ({ ...f, confirm: e.target.value }))} className="input-field w-full"/>
+              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                Confirm New Password
+              </label>
+              <input
+                type="password"
+                value={pwForm.confirm}
+                onChange={(e) =>
+                  setPwForm((f) => ({ ...f, confirm: e.target.value }))
+                }
+                className="input-field w-full"
+              />
               {pwForm.confirm && pwForm.next !== pwForm.confirm && (
-                <p className="font-mono text-[10px] text-red-500 mt-1">Passwords do not match</p>
+                <p className="font-mono text-[10px] text-red-500 mt-1">
+                  Passwords do not match
+                </p>
               )}
             </div>
-            <button onClick={changePassword} disabled={saving} className="btn-primary w-full disabled:opacity-50">
+            <button
+              onClick={changePassword}
+              disabled={saving}
+              className="btn-primary w-full disabled:opacity-50"
+            >
               {saving ? "UPDATING…" : "UPDATE PASSWORD"}
             </button>
             <div className="pt-4 border-t border-gray-800 space-y-2">
-              <h3 className="font-mono text-xs text-gray-500 uppercase tracking-wider">Account Info</h3>
+              <h3 className="font-mono text-xs text-gray-500 uppercase tracking-wider">
+                Account Info
+              </h3>
               <div className="space-y-1 font-mono text-xs text-gray-600">
-                <p>Username: <span className="text-gray-400">{player.username}</span></p>
-                <p>Email: <span className="text-gray-400">{player.email}</span></p>
-                {player.phone && <p>Phone: <span className="text-gray-400">{player.phone}</span></p>}
-                {player.country && <p>Country: <span className="text-gray-400">{player.country}</span></p>}
-                {player.dateOfBirth && <p>DOB: <span className="text-gray-400">{new Date(player.dateOfBirth).toLocaleDateString()}</span></p>}
-                <p>Member since: <span className="text-gray-400">{new Date(player.createdAt || Date.now()).toLocaleDateString()}</span></p>
+                <p>
+                  Username:{" "}
+                  <span className="text-gray-400">{player.username}</span>
+                </p>
+                <p>
+                  Email: <span className="text-gray-400">{player.email}</span>
+                </p>
+                {player.phone && (
+                  <p>
+                    Phone: <span className="text-gray-400">{player.phone}</span>
+                  </p>
+                )}
+                {player.country && (
+                  <p>
+                    Country:{" "}
+                    <span className="text-gray-400">{player.country}</span>
+                  </p>
+                )}
+                {player.dateOfBirth && (
+                  <p>
+                    DOB:{" "}
+                    <span className="text-gray-400">
+                      {new Date(player.dateOfBirth).toLocaleDateString()}
+                    </span>
+                  </p>
+                )}
+                <p>
+                  Member since:{" "}
+                  <span className="text-gray-400">
+                    {new Date(
+                      player.createdAt || Date.now(),
+                    ).toLocaleDateString()}
+                  </span>
+                </p>
               </div>
             </div>
           </div>
@@ -396,23 +742,39 @@ export default function ProfilePage() {
                 ["Games", stats.gamesPlayed || 0, "text-blue-400"],
                 ["Wins", stats.wins || 0, "text-green-400"],
                 ["Survival Rate", survivalRate + "%", "text-yellow-400"],
-                ["Rooms Survived", stats.totalRoomsSurvived || 0, "text-purple-400"],
+                [
+                  "Rooms Survived",
+                  stats.totalRoomsSurvived || 0,
+                  "text-purple-400",
+                ],
               ].map(([label, val, color]) => (
                 <div key={label} className="glass-card p-4 text-center">
-                  <p className={`font-display text-2xl font-bold ${color}`}>{val}</p>
-                  <p className="font-mono text-[10px] text-gray-600 uppercase mt-1">{label}</p>
+                  <p className={`font-display text-2xl font-bold ${color}`}>
+                    {val}
+                  </p>
+                  <p className="font-mono text-[10px] text-gray-600 uppercase mt-1">
+                    {label}
+                  </p>
                 </div>
               ))}
             </div>
 
             <div className="glass-card p-5 space-y-3">
               <div className="flex items-center justify-between">
-                <h2 className="font-mono text-xs text-gray-500 uppercase tracking-wider">Match History</h2>
-                {historyTotal > 0 && <span className="font-mono text-[10px] text-gray-700">{history.length} of {historyTotal}</span>}
+                <h2 className="font-mono text-xs text-gray-500 uppercase tracking-wider">
+                  Match History
+                </h2>
+                {historyTotal > 0 && (
+                  <span className="font-mono text-[10px] text-gray-700">
+                    {history.length} of {historyTotal}
+                  </span>
+                )}
               </div>
 
               {history.length === 0 && !historyLoading ? (
-                <p className="font-mono text-xs text-gray-700">No matches yet — start playing!</p>
+                <p className="font-mono text-xs text-gray-700">
+                  No matches yet — start playing!
+                </p>
               ) : (
                 <>
                   {history.map((m, i) => {
@@ -420,7 +782,11 @@ export default function ProfilePage() {
                     // username, which could theoretically change) with a
                     // username fallback for older records
                     const me = m.players?.find(
-                      (p) => (p.playerId && (p.playerId === player._id || p.playerId === player.id)) || p.username === player.username
+                      (p) =>
+                        (p.playerId &&
+                          (p.playerId === player._id ||
+                            p.playerId === player.id)) ||
+                        p.username === player.username,
                     );
                     // FIX: read roomsSurvived (the field the server actually
                     // writes — see MATCH_PLAYERS_RESULT_FIX.md) instead of a
@@ -428,19 +794,31 @@ export default function ProfilePage() {
                     const roomsSurvived = me?.roomsSurvived ?? 0;
                     const won = me?.isWinner === true;
                     return (
-                      <div key={m._id || i} className="flex items-center justify-between border-b border-gray-800 pb-2 last:border-0">
+                      <div
+                        key={m._id || i}
+                        className="flex items-center justify-between border-b border-gray-800 pb-2 last:border-0"
+                      >
                         <div>
-                          <p className="font-mono text-xs text-white">{m.roomCode}</p>
+                          <p className="font-mono text-xs text-white">
+                            {m.roomCode}
+                          </p>
                           <p className="font-mono text-[10px] text-gray-600">
-                            {new Date(m.endedAt || m.createdAt).toLocaleDateString()}
-                            {" · "}{m.players?.length || 0} players
+                            {new Date(
+                              m.endedAt || m.createdAt,
+                            ).toLocaleDateString()}
+                            {" · "}
+                            {m.players?.length || 0} players
                           </p>
                         </div>
                         <div className="text-right">
-                          <p className={`font-mono text-xs font-bold ${won ? "text-green-400" : "text-red-500"}`}>
+                          <p
+                            className={`font-mono text-xs font-bold ${won ? "text-green-400" : "text-red-500"}`}
+                          >
                             {won ? "WON" : "ELIMINATED"}
                           </p>
-                          <p className="font-mono text-[10px] text-gray-600">{roomsSurvived}/{m.totalRooms || 0} rooms</p>
+                          <p className="font-mono text-[10px] text-gray-600">
+                            {roomsSurvived}/{m.totalRooms || 0} rooms
+                          </p>
                         </div>
                       </div>
                     );
@@ -448,14 +826,19 @@ export default function ProfilePage() {
 
                   {historyHasMore && (
                     <div className="text-center pt-2">
-                      <button onClick={() => fetchHistory(false)} disabled={historyLoading}
-                        className="btn-secondary text-sm disabled:opacity-50">
+                      <button
+                        onClick={() => fetchHistory(false)}
+                        disabled={historyLoading}
+                        className="btn-secondary text-sm disabled:opacity-50"
+                      >
                         {historyLoading ? "Loading…" : "Load More"}
                       </button>
                     </div>
                   )}
                   {historyLoading && history.length === 0 && (
-                    <p className="font-mono text-xs text-gray-700 text-center py-4">Loading…</p>
+                    <p className="font-mono text-xs text-gray-700 text-center py-4">
+                      Loading…
+                    </p>
                   )}
                 </>
               )}
@@ -467,6 +850,114 @@ export default function ProfilePage() {
       {tab === "billing" && (
         <div className="space-y-4 py-6 max-w-2xl mx-auto">
           <SubscriptionSection player={player} onUpdate={fetchProfile} />
+        </div>
+      )}
+
+      {tab === "support" && (
+        <div className="space-y-4 py-6 max-w-2xl mx-auto">
+          <div className="glass-card p-5 space-y-4">
+            <h2 className="font-mono text-xs text-gray-500 uppercase tracking-wider">
+              Contact Support
+            </h2>
+            <div>
+              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                Category
+              </label>
+              <select
+                value={category}
+                onChange={(e) => setCategory(e.target.value)}
+                className="input-field w-full"
+              >
+                <option value="bug">Bug Report</option>
+                <option value="billing">Billing / Subscription</option>
+                <option value="account">Account Issue</option>
+                <option value="gameplay">Gameplay Question</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                Subject
+              </label>
+              <input
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                maxLength={120}
+                className="input-field w-full"
+                placeholder="Brief summary of your issue"
+              />
+            </div>
+            <div>
+              <label className="font-mono text-xs text-gray-500 uppercase tracking-wider block mb-1">
+                Message
+              </label>
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                rows={5}
+                maxLength={2000}
+                className="input-field w-full resize-none"
+                placeholder="Describe what happened, what you expected, and any relevant details (room code, error message, etc.)"
+              />
+              <p className="font-mono text-[10px] text-gray-700 mt-1">
+                {message.length}/2000
+              </p>
+            </div>
+            <button
+              onClick={submitTicket}
+              disabled={submitting}
+              className="btn-primary w-full disabled:opacity-50"
+            >
+              {submitting ? "SUBMITTING…" : "SUBMIT TICKET"}
+            </button>
+          </div>
+
+          <div className="glass-card p-5 space-y-3">
+            <h2 className="font-mono text-xs text-gray-500 uppercase tracking-wider">
+              Your Tickets
+            </h2>
+            {ticketsLoading ? (
+              <p className="font-mono text-xs text-gray-700">Loading…</p>
+            ) : tickets.length === 0 ? (
+              <p className="font-mono text-xs text-gray-700">No tickets yet.</p>
+            ) : (
+              tickets.map((t) => (
+                <div
+                  key={t._id}
+                  className="border-b border-gray-800 pb-3 last:border-0 space-y-1"
+                >
+                  <div className="flex items-center justify-between">
+                    <p className="font-mono text-sm text-white">{t.subject}</p>
+                    <span
+                      className={`font-mono text-[10px] px-1.5 py-0.5 rounded border ${
+                        t.status === "resolved" || t.status === "closed"
+                          ? "text-green-400 border-green-800"
+                          : t.status === "in_progress"
+                            ? "text-yellow-400 border-yellow-800"
+                            : "text-gray-500 border-gray-700"
+                      }`}
+                    >
+                      {t.status.replace("_", " ")}
+                    </span>
+                  </div>
+                  <p className="font-mono text-[10px] text-gray-600">
+                    {t.category} · {new Date(t.createdAt).toLocaleDateString()}
+                  </p>
+                  <p className="font-mono text-xs text-gray-400">{t.message}</p>
+                  {t.adminResponse && (
+                    <div className="bg-green-950/20 border border-green-900/50 rounded p-2 mt-2">
+                      <p className="font-mono text-[10px] text-green-500 uppercase mb-1">
+                        Support Response
+                      </p>
+                      <p className="font-mono text-xs text-gray-300">
+                        {t.adminResponse}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
 

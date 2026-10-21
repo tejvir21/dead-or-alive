@@ -4,10 +4,15 @@ WORKDIR /app
 
 # Copy package files first for layer caching
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --omit=dev
 
-# Copy source
-COPY . .
+# Copy runtime source without copying local environment files or unrelated artifacts
+COPY index.js mailer.js ./
+COPY middleware ./middleware
+COPY models ./models
+COPY routes ./routes
+COPY socket ./socket
+COPY utils ./utils
 
 # Non-root user for security
 RUN addgroup -g 1001 -S nodejs && \

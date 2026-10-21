@@ -63,6 +63,7 @@ app.use('/api/notifications', apiLimiter, notificationRouter);
 app.use('/api/payments', require('./routes/payments'));
 app.use('/api/clans', require('./routes/clans'));
 app.use('/api/push', require('./routes/push'));
+app.use('/api/support', require('./routes/support'))
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', uptime: process.uptime() }));

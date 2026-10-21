@@ -1,10 +1,4 @@
-/**
- * LobbyPage.jsx — Fixed for mobile
- * Header now stacks vertically on small screens instead of forcing a
- * single row that overflows (title+buttons all fit on one line only on
- * wider screens; on mobile it's title on top, action buttons wrap below).
- */
-import React, { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { connectSocket, emit } from "../socket/socketClient";
@@ -18,6 +12,19 @@ function formatTime(seconds) {
   const s = seconds % 60;
   return s === 0 ? `${m}m` : `${m}m ${s}s`;
 }
+
+// Curve display labels — presentational only, not tier-gating (that part
+// is now fully dynamic via tierInfo.tierSettings.unlockedCurves below)
+let ALL_CURVES = [
+  { name: "gentle", label: "Gentle" },
+  { name: "balanced", label: "Balanced" },
+  { name: "stepped", label: "Stepped (default)" },
+  { name: "ascending_fast", label: "Ascending Fast" },
+  { name: "spike", label: "Spike" },
+  { name: "nightmare", label: "Nightmare" },
+  { name: "expert", label: "Expert" },
+  { name: "random", label: "Random" },
+];
 
 export default function LobbyPage() {
   const navigate = useNavigate();
@@ -33,13 +40,17 @@ export default function LobbyPage() {
   const [maxPlayers, setMaxPlayers] = useState(8);
   const [minPlayers, setMinPlayers] = useState(1);
   const [curve, setCurve] = useState("stepped");
+  const [roomCount, setRoomCount] = useState("");
   const [mode, setMode] = useState("solo"); // 'solo' | 'coop' | 'vs'
   const [coopSubMode, setCoopSubMode] = useState("unity"); // 'unity' | 'resilience'
   const [teamCount, setTeamCount] = useState(2); // vs mode: 2-4 teams
 
-  const [settings, setSettings] = useState(null);
   const [autoStartDuration, setAutoStartDuration] = useState(180);
   const [dailyUsage, setDailyUsage] = useState(null);
+
+  const [tierInfo, setTierInfo] = useState(null); // { tier, tierSettings }
+
+  const [difficultyCurves, setDifficultyCurves] = useState([]);
 
   const intervalRef = useRef(null);
   const joinCodeRef = useRef(joinCode);
@@ -47,37 +58,41 @@ export default function LobbyPage() {
     joinCodeRef.current = joinCode;
   }, [joinCode]);
 
-  const isVerifiedOrPro =
-    player?.isVerified ||
-    (player?.subscription?.plan && player.subscription.plan !== "free");
-  const tier =
-    player?.subscription?.plan === "elite"
-      ? "elite"
-      : player?.subscription?.plan === "pro"
-        ? "pro"
-        : player?.isVerified
-          ? "verified"
-          : "free";
+  const tierLimits = tierInfo?.tierSettings
+    ? {
+        min: tierInfo.tierSettings.autoStartMin,
+        max: tierInfo.tierSettings.autoStartMax,
+      }
+    : { min: 180, max: 180 };
+  const unlockedCurves = tierInfo?.tierSettings?.unlockedCurves || ["stepped"];
+  const tier = tierInfo?.tier || "free";
+  const maxPlayersAllowed = tierInfo?.tierSettings?.maxPlayers || 4;
+  const minPlayersAllowed = tierInfo?.tierSettings?.minPlayers || 1;
+  const maxTeams = tierInfo?.tierSettings?.maxTeams || 2;
+  const maxRooms = tierInfo?.tierSettings?.maxRooms || 5;
+  const canChooseRoomCount =
+    tierInfo?.tierSettings?.canChooseRoomCount || false;
 
   useEffect(() => {
     (async () => {
       try {
-        const data = await apiJSON("/settings");
-        setSettings(data.settings);
-        const tierLim = data.settings?.autoStartTimer?.tierLimits?.[tier] || {
-          min: 180,
-          max: 180,
+        const data = await apiJSON("/game/my-tier");
+        // console.log("Fetched tier info:", data);
+        setTierInfo(data);
+        const tl = {
+          min: data.tierSettings.autoStartMin,
+          max: data.tierSettings.autoStartMax,
         };
+
+        let defaultDuration = 180;
+        try {
+          const s = await apiJSON("/settings");
+          defaultDuration = s.settings?.autoStartTimer?.defaultDuration || 180;
+          ALL_CURVES = s.settings?.difficultyCurves;
+          setDifficultyCurves(ALL_CURVES);
+        } catch (_) {}
         setAutoStartDuration(
-          data.settings?.autoStartTimer?.defaultDuration
-            ? Math.min(
-                tierLim.max,
-                Math.max(
-                  tierLim.min,
-                  data.settings.autoStartTimer.defaultDuration,
-                ),
-              )
-            : tierLim.min,
+          Math.min(tl.max, Math.max(tl.min, defaultDuration)),
         );
       } catch (_) {}
       try {
@@ -85,12 +100,7 @@ export default function LobbyPage() {
         setDailyUsage(usage);
       } catch (_) {}
     })();
-  }, [tier]);
-
-  const tierLimits = settings?.autoStartTimer?.tierLimits?.[tier] || {
-    min: 180,
-    max: 180,
-  };
+  }, []);
 
   const fetchLobbies = async () => {
     try {
@@ -161,6 +171,7 @@ export default function LobbyPage() {
       mode,
       coopSubMode: mode === "coop" ? coopSubMode : undefined,
       teamCount: mode === "vs" ? teamCount : undefined,
+      roomCount: roomCount ?? null,
     });
   };
 
@@ -237,6 +248,12 @@ export default function LobbyPage() {
                   ⭐ ELITE
                 </span>
               )}
+              {player?.subscription?.plan &&
+                !["pro", "elite"].includes(player.subscription.plan) && (
+                  <span className="font-mono text-[10px] text-cyan-300 border border-cyan-600 px-1.5 py-0.5 rounded uppercase">
+                    {player.subscription.plan}
+                  </span>
+                )}
             </div>
           </div>
 
@@ -413,7 +430,15 @@ export default function LobbyPage() {
                 onChange={(e) => setTeamCount(parseInt(e.target.value))}
                 className="input-field text-sm w-full sm:w-40"
               >
-                {[2, 3, 4].map((n) => (
+                {/* {[2, 3, 4].map((n) => (
+                  <option key={n} value={n}>
+                    {n} teams
+                  </option>
+                ))} */}
+                {Array.from(
+                  { length: Math.max(2, maxTeams - 1) },
+                  (_, i) => i + 2,
+                ).map((n) => (
                   <option key={n} value={n}>
                     {n} teams
                   </option>
@@ -432,7 +457,15 @@ export default function LobbyPage() {
                 onChange={(e) => setMaxPlayers(e.target.value)}
                 className="input-field text-sm w-full"
               >
-                {[2, 4, 6, 8, 10, 12, 14, 16].map((n) => (
+                {/* {[2, 4, 6, 8, 10, 12, 14, 16].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))} */}
+                {Array.from(
+                  { length: Math.max(1, maxPlayersAllowed) },
+                  (_, i) => i + 1,
+                ).map((n) => (
                   <option key={n} value={n}>
                     {n}
                   </option>
@@ -448,14 +481,22 @@ export default function LobbyPage() {
                 onChange={(e) => setMinPlayers(e.target.value)}
                 className="input-field text-sm w-full"
               >
-                {[1, 2, 3, 4].map((n) => (
+                {/* {[1, 2, 3, 4].map((n) => (
+                  <option key={n} value={n}>
+                    {n}
+                  </option>
+                ))} */}
+                {Array.from(
+                  { length: Math.max(1, minPlayersAllowed) },
+                  (_, i) => i + 1,
+                ).map((n) => (
                   <option key={n} value={n}>
                     {n}
                   </option>
                 ))}
               </select>
             </div>
-            <div className="col-span-2">
+            <div className={canChooseRoomCount ? "col-span-1" : "col-span-2"}>
               <label className="font-mono text-xs text-gray-600 uppercase block mb-1">
                 Difficulty Curve
               </label>
@@ -464,20 +505,47 @@ export default function LobbyPage() {
                 onChange={(e) => setCurve(e.target.value)}
                 className="input-field text-sm w-full"
               >
-                <option value="gentle">Gentle</option>
-                <option value="balanced">Balanced</option>
-                <option value="stepped">Stepped (default)</option>
-                <option value="ascending_fast">Ascending Fast</option>
-                {isVerifiedOrPro && (
-                  <>
-                    <option value="spike">Spike</option>
-                    <option value="nightmare">Nightmare</option>
-                    <option value="expert">Expert</option>
-                    <option value="random">Random</option>
-                  </>
-                )}
+                {(difficultyCurves || ALL_CURVES)
+                  .filter((c) => unlockedCurves.includes(c.name))
+                  .map((c) => (
+                    <option key={c.name} value={c.name}>
+                      {c.label} {c?.isDefault && "(default)"}
+                    </option>
+                  ))}
               </select>
+              {(difficultyCurves || ALL_CURVES).some(
+                (c) => !unlockedCurves.includes(c.name),
+              ) && (
+                <p className="font-mono text-[10px] text-gray-700 mt-1">
+                  Some curves are locked for your {tier.toUpperCase()} tier —
+                  upgrade to unlock more.
+                </p>
+              )}
             </div>
+            {canChooseRoomCount && (
+              <div>
+                <label className="font-mono text-xs text-gray-600 uppercase block mb-1">
+                  Room Count (optional)
+                </label>
+                <select
+                  value={roomCount}
+                  onChange={(e) => setRoomCount(parseInt(e.target.value))}
+                  className="input-field text-sm w-full"
+                >
+                  <option key="auto" value={null}>
+                    Auto
+                  </option>
+                  {Array.from(
+                    { length: Math.max(0, maxRooms - 4) },
+                    (_, i) => i + 5,
+                  ).map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Auto-start timer selector */}

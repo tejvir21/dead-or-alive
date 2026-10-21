@@ -39,6 +39,351 @@ const EMPTY_CLUE = {
 };
 const PAGE = 50;
 
+const TIER_COLORS = {
+  free: "border-gray-700 text-gray-400",
+  verified: "border-blue-700 text-blue-400",
+  pro: "border-purple-700 text-purple-400",
+  elite: "border-yellow-700 text-yellow-400",
+};
+
+const DEFAULT_TIER_COLOR = "border-cyan-700 text-cyan-400";
+
+function TierSettingsSection({ settings, onSaved, showMsg }) {
+  const [tiers, setTiers] = useState(null);
+  const [availableCurves, setAvailableCurves] = useState([]);
+  const [activeTier, setActiveTier] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    load();
+  }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const d = await apiJSON("/admin/tiers");
+      setTiers(d.tiers);
+      setAvailableCurves(d.availableCurves || []);
+      // FIX: pick the first tier name found in the ACTUAL response,
+      // not a hardcoded 'free' that might not even be first anymore
+      const names = Object.keys(d.tiers || {});
+      setActiveTier((prev) =>
+        prev && names.includes(prev) ? prev : names[0] || null,
+      );
+    } catch (err) {
+      showMsg(err.message, true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateField = (tier, field, value) => {
+    setTiers((prev) => ({
+      ...prev,
+      [tier]: { ...prev[tier], [field]: value },
+    }));
+  };
+
+  const toggleCurve = (tier, curveName) => {
+    setTiers((prev) => {
+      const current = prev[tier].unlockedCurves || [];
+      const updated = current.includes(curveName)
+        ? current.filter((c) => c !== curveName)
+        : [...current, curveName];
+      return { ...prev, [tier]: { ...prev[tier], unlockedCurves: updated } };
+    });
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await apiJSON("/admin/tiers", {
+        method: "PATCH",
+        body: JSON.stringify({ tiers }),
+      });
+      onSaved();
+      showMsg(`✅ ${activeTier.toUpperCase()} tier settings saved`);
+    } catch (err) {
+      showMsg(err.message, true);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading || !tiers || !activeTier)
+    return (
+      <p className="font-mono text-xs text-gray-700 py-4">
+        Loading tier settings…
+      </p>
+    );
+
+  // FIX: derive the tab list from the actual data every render, not a
+  // module-level constant — so a plan added/removed shows up immediately
+  // on next load without needing a code change
+  const tierNames = Object.keys(tiers);
+  const t = tiers[activeTier];
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="font-mono text-xs text-gray-500 uppercase tracking-widest">
+          Tier Settings
+        </h2>
+        <p className="font-mono text-[10px] text-gray-700 mt-1">
+          💡 Everything one tier gets, in one place. New subscription plans
+          automatically appear here as their own tab once created.
+        </p>
+      </div>
+
+      <div className="flex gap-2 flex-wrap">
+        {tierNames.map((tier) => (
+          <button
+            key={tier}
+            onClick={() => setActiveTier(tier)}
+            className={`font-mono text-xs px-4 py-2 rounded border uppercase tracking-wider transition-colors ${
+              activeTier === tier
+                ? `bg-gray-900 ${TIER_COLORS[tier] || DEFAULT_TIER_COLOR}`
+                : "border-gray-800 text-gray-600"
+            }`}
+          >
+            {tier}
+          </button>
+        ))}
+      </div>
+
+      <div className="glass-card p-5 space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+              Daily Create Limit
+            </label>
+            <input
+              type="number"
+              value={t.dailyCreate}
+              onChange={(e) =>
+                updateField(activeTier, "dailyCreate", parseInt(e.target.value))
+              }
+              className="input-field text-sm w-full"
+            />
+            <p className="font-mono text-[9px] text-gray-700 mt-0.5">
+              -1 = unlimited
+            </p>
+          </div>
+          <div>
+            <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+              Daily Join Limit
+            </label>
+            <input
+              type="number"
+              value={t.dailyJoin}
+              onChange={(e) =>
+                updateField(activeTier, "dailyJoin", parseInt(e.target.value))
+              }
+              className="input-field text-sm w-full"
+            />
+            <p className="font-mono text-[9px] text-gray-700 mt-0.5">
+              -1 = unlimited
+            </p>
+          </div>
+          <div>
+            <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+              Auto-Start Min (sec)
+            </label>
+            <input
+              type="number"
+              value={t.autoStartMin}
+              onChange={(e) =>
+                updateField(
+                  activeTier,
+                  "autoStartMin",
+                  parseInt(e.target.value),
+                )
+              }
+              className="input-field text-sm w-full"
+            />
+          </div>
+          <div>
+            <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+              Auto-Start Max (sec)
+            </label>
+            <input
+              type="number"
+              value={t.autoStartMax}
+              onChange={(e) =>
+                updateField(
+                  activeTier,
+                  "autoStartMax",
+                  parseInt(e.target.value),
+                )
+              }
+              className="input-field text-sm w-full"
+            />
+          </div>
+          <div>
+            <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+              Min Players Per Room
+            </label>
+            <input
+              type="number"
+              value={t.minPlayers}
+              onChange={(e) =>
+                updateField(activeTier, "minPlayers", parseInt(e.target.value))
+              }
+              className="input-field text-sm w-full"
+            />
+          </div>
+          <div>
+            <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+              Max Players Per Room
+            </label>
+            <input
+              type="number"
+              value={t.maxPlayers}
+              onChange={(e) =>
+                updateField(activeTier, "maxPlayers", parseInt(e.target.value))
+              }
+              className="input-field text-sm w-full"
+            />
+          </div>
+          {t.canChooseRoomCount && (
+            <div>
+              <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+                Max Rooms Per Player
+              </label>
+              <input
+                type="number"
+                value={t.maxRooms}
+                onChange={(e) =>
+                  updateField(activeTier, "maxRooms", parseInt(e.target.value))
+                }
+                className="input-field text-sm w-full"
+              />
+            </div>
+          )}
+          <div>
+            <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+              Max Teams in Vs Mode
+            </label>
+            <input
+              type="number"
+              value={t.maxTeams}
+              onChange={(e) =>
+                updateField(activeTier, "maxTeams", parseInt(e.target.value))
+              }
+              className="input-field text-sm w-full"
+            />
+          </div>
+          {t.canCreateClan && (
+            <div>
+              <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+                Owned Clans Limit
+              </label>
+              <input
+                type="number"
+                value={t.ownedClansLimit}
+                onChange={(e) =>
+                  updateField(
+                    activeTier,
+                    "ownedClansLimit",
+                    parseInt(e.target.value),
+                  )
+                }
+                className="input-field text-sm w-full"
+              />
+            </div>
+          )}
+        </div>
+
+        <div className="flex gap-4 flex-wrap">
+          <div className="flex items-center gap-2">
+            <input
+              id="clan-create"
+              type="checkbox"
+              checked={t.canCreateClan}
+              onChange={(e) =>
+                updateField(activeTier, "canCreateClan", e.target.checked)
+              }
+            />
+            <label
+              htmlFor="clan-create"
+              className="font-mono text-xs text-gray-400"
+            >
+              Can create a clan
+            </label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              id="room-count"
+              type="checkbox"
+              checked={t.canChooseRoomCount}
+              onChange={(e) =>
+                updateField(activeTier, "canChooseRoomCount", e.target.checked)
+              }
+            />
+            <label
+              htmlFor="room-count"
+              className="font-mono text-xs text-gray-400"
+            >
+              Can choose room count
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+            Beta Access
+          </label>
+          <select
+            value={t.betaAccess}
+            onChange={(e) =>
+              updateField(activeTier, "betaAccess", e.target.value)
+            }
+            className="input-field text-sm w-full"
+          >
+            <option value="none">No access</option>
+            <option value="request">Can request access</option>
+            <option value="auto">Automatic access</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="font-mono text-[10px] text-gray-600 uppercase block mb-2">
+            Unlocked Difficulty Curves
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {availableCurves.map((curve) => (
+              <button
+                key={curve}
+                onClick={() => toggleCurve(activeTier, curve)}
+                className={`font-mono text-[10px] px-2 py-1 rounded border ${
+                  (t.unlockedCurves || []).includes(curve)
+                    ? "border-green-700 bg-green-950/20 text-green-400"
+                    : "border-gray-800 text-gray-600"
+                }`}
+              >
+                {curve}
+              </button>
+            ))}
+          </div>
+          <p className="font-mono text-[9px] text-gray-700 mt-2">
+            💡 Fully per-tier — the server validates this exact list when a room
+            is created, so "Pro and Elite only, not Verified" now works
+            correctly.
+          </p>
+        </div>
+
+        <button
+          onClick={save}
+          disabled={saving}
+          className="btn-primary w-full disabled:opacity-50"
+        >
+          {saving ? "SAVING…" : `SAVE ${activeTier.toUpperCase()} SETTINGS`}
+        </button>
+      </div>
+    </div>
+  );
+}
 const exportCSV = async (endpoint, filename) => {
   // FIX: apiClient.js (the real source of truth) destructures
   // `accessToken`, not `token` — if the auth store doesn't also expose a
@@ -455,8 +800,24 @@ function BulkImport({ onDone }) {
 function GiftModal({ player, onClose, onDone }) {
   const [plan, setPlan] = useState("pro");
   const [days, setDays] = useState(30);
+  const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    load();
+  }, []);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const d = await apiJSON("/settings");
+      setSettings(d.settings || d);
+    } catch (_) {
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handle = async () => {
     setLoading(true);
     setError("");
@@ -504,8 +865,14 @@ function GiftModal({ player, onClose, onDone }) {
             onChange={(e) => setPlan(e.target.value)}
             className="input-field w-full"
           >
+            {(settings?.subscriptionPlans || []).map((p) => (
+              <option key={p.name} value={p.name}>
+                {p.label}
+              </option>
+            ))}
+            {/* 
             <option value="pro">Pro</option>
-            <option value="elite">Elite</option>
+            <option value="elite">Elite</option> */}
           </select>
         </div>
         <div>
@@ -888,15 +1255,16 @@ function SettingsTab() {
   const curves = settings.difficultyCurves || [];
 
   const sections = [
-    { id: "general", label: "Timers & Limits" },
+    { id: "general", label: "Timers" },
     { id: "features", label: "Feature Flags" },
-    { id: "limits", label: "Daily Limits" },
+    // { id: "limits", label: "Daily Limits" },
     { id: "autostart", label: "Auto-Start" },
     { id: "kick", label: "Kick System" },
     { id: "beta", label: "Beta Access" },
     { id: "curves", label: "Difficulty Curves" },
     { id: "plans", label: "Subscription Plans" },
     { id: "clanBattles", label: "Clan Battles" },
+    { id: "tiers", label: "Tier Settings" },
   ];
 
   return (
@@ -927,7 +1295,7 @@ function SettingsTab() {
       {section === "general" && (
         <div className="glass-card p-4 sm:p-5 space-y-4">
           <h2 className="font-mono text-xs text-gray-500 uppercase tracking-widest">
-            ⏱ Timers & Player Limits
+            ⏱ Timers & Limits
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[
@@ -946,21 +1314,21 @@ function SettingsTab() {
                 "countdownSeconds",
                 settings.countdownSeconds,
               ],
-              [
-                "Max Players (normal)",
-                "maxPlayersNormal",
-                settings.maxPlayersNormal,
-              ],
-              [
-                "Max Players (verified+)",
-                "maxPlayersVerified",
-                settings.maxPlayersVerified,
-              ],
-              [
-                "Min Players to Start",
-                "minPlayersToStart",
-                settings.minPlayersToStart,
-              ],
+              // [
+              //   "Max Players (normal)",
+              //   "maxPlayersNormal",
+              //   settings.maxPlayersNormal,
+              // ],
+              // [
+              //   "Max Players (verified+)",
+              //   "maxPlayersVerified",
+              //   settings.maxPlayersVerified,
+              // ],
+              // [
+              //   "Min Players to Start",
+              //   "minPlayersToStart",
+              //   settings.minPlayersToStart,
+              // ],
               [
                 "Reconnect Grace (normal)",
                 "reconnectGraceNormal",
@@ -1091,7 +1459,7 @@ function SettingsTab() {
           <p className="font-mono text-[10px] text-gray-600 uppercase pt-2 border-t border-gray-800">
             Per-tier adjustable range (room creator can choose within this)
           </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {["free", "verified", "pro", "elite"].map((tier) => (
               <div key={tier} className="border border-gray-800 rounded-lg p-3">
                 <p className="font-mono text-xs text-white uppercase mb-2">
@@ -1117,7 +1485,7 @@ function SettingsTab() {
                 </div>
               </div>
             ))}
-          </div>
+          </div> */}
         </div>
       )}
 
@@ -1220,7 +1588,7 @@ function SettingsTab() {
               Shown in profile page to approved beta testers.
             </p>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Toggle
               label="Elite = automatic beta access"
               value={ba.allowElite}
@@ -1232,7 +1600,7 @@ function SettingsTab() {
               onChange={(v) => saveBetaAccess({ allowPro: v })}
               hint="Requests appear in Beta Requests tab"
             />
-          </div>
+          </div> */}
           <div>
             <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
               Locked screen message (non-beta users)
@@ -1610,6 +1978,14 @@ function SettingsTab() {
 
       {section === "clanBattles" && (
         <ClanBattleSettingsSection
+          settings={settings}
+          onSaved={load}
+          showMsg={showMsg}
+        />
+      )}
+
+      {section === "tiers" && (
+        <TierSettingsSection
           settings={settings}
           onSaved={load}
           showMsg={showMsg}
@@ -3560,8 +3936,19 @@ function ErrorLogsTab() {
 // ── Lightweight, dependency-free bar chart — no charting library required,
 // matching how lean the rest of this codebase is. Renders a simple
 // horizontal set of bars sized proportionally to the max value. ──────────────
-function MiniBarChart({ data, labelKey, valueKey, color = "bg-green-600", formatValue }) {
-  if (!data || data.length === 0) return <p className="font-mono text-xs text-gray-700">No data for this period.</p>;
+function MiniBarChart({
+  data,
+  labelKey,
+  valueKey,
+  color = "bg-green-600",
+  formatValue,
+}) {
+  if (!data || data.length === 0)
+    return (
+      <p className="font-mono text-xs text-gray-700">
+        No data for this period.
+      </p>
+    );
   const max = Math.max(...data.map((d) => d[valueKey]), 1);
   return (
     <div className="space-y-1.5">
@@ -3589,7 +3976,12 @@ function MiniBarChart({ data, labelKey, valueKey, color = "bg-green-600", format
 // one per day, with the date range labeled at the ends only (not every
 // single day, to avoid clutter on a 30-90 day range). ──────────────────────
 function MiniTimeSeries({ data, valueKey = "count", color = "bg-blue-600" }) {
-  if (!data || data.length === 0) return <p className="font-mono text-xs text-gray-700">No data for this period.</p>;
+  if (!data || data.length === 0)
+    return (
+      <p className="font-mono text-xs text-gray-700">
+        No data for this period.
+      </p>
+    );
   const max = Math.max(...data.map((d) => d[valueKey]), 1);
   return (
     <div>
@@ -3634,7 +4026,11 @@ function AnalyticsTab() {
     }
   };
 
-  const MODE_COLORS = { solo: "bg-blue-600", coop: "bg-cyan-600", vs: "bg-orange-600" };
+  const MODE_COLORS = {
+    solo: "bg-blue-600",
+    coop: "bg-cyan-600",
+    vs: "bg-orange-600",
+  };
 
   return (
     <div className="space-y-6">
@@ -3666,7 +4062,9 @@ function AnalyticsTab() {
       )}
 
       {loading ? (
-        <p className="font-mono text-xs text-gray-700 text-center py-12">Loading analytics…</p>
+        <p className="font-mono text-xs text-gray-700 text-center py-12">
+          Loading analytics…
+        </p>
       ) : data ? (
         <>
           {/* Revenue & subscriptions */}
@@ -3675,24 +4073,48 @@ function AnalyticsTab() {
               💳 Revenue & Subscriptions
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <StatCard label="Revenue (period)" value={`₹${(data.revenue.totalRevenue || 0).toLocaleString()}`} color="text-green-400" />
-              <StatCard label="MAU" value={data.activity.mau} color="text-blue-400" />
+              <StatCard
+                label="Revenue (period)"
+                value={`₹${(data.revenue.totalRevenue || 0).toLocaleString()}`}
+                color="text-green-400"
+              />
+              <StatCard
+                label="MAU"
+                value={data.activity.mau}
+                color="text-blue-400"
+              />
               <StatCard
                 label="Day-1 Retention"
-                value={data.activity.day1Retention != null ? `${data.activity.day1Retention}%` : "—"}
+                value={
+                  data.activity.day1Retention != null
+                    ? `${data.activity.day1Retention}%`
+                    : "—"
+                }
                 color="text-purple-400"
               />
-              <StatCard label="Matches (period)" value={data.gameModes.totalMatches} color="text-orange-400" />
+              <StatCard
+                label="Matches (period)"
+                value={data.gameModes.totalMatches}
+                color="text-orange-400"
+              />
             </div>
 
             <div>
-              <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Daily Revenue</p>
-              <MiniTimeSeries data={data.revenue.daily} valueKey="amount" color="bg-green-600" />
+              <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">
+                Daily Revenue
+              </p>
+              <MiniTimeSeries
+                data={data.revenue.daily}
+                valueKey="amount"
+                color="bg-green-600"
+              />
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Revenue by Plan (period)</p>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">
+                  Revenue by Plan (period)
+                </p>
                 <MiniBarChart
                   data={data.revenue.byPlan}
                   labelKey="plan"
@@ -3702,7 +4124,9 @@ function AnalyticsTab() {
                 />
               </div>
               <div>
-                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Current Subscribers (all-time)</p>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">
+                  Current Subscribers (all-time)
+                </p>
                 <MiniBarChart
                   data={data.subscriptions.breakdown}
                   labelKey="plan"
@@ -3720,16 +4144,25 @@ function AnalyticsTab() {
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Daily Active Users</p>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">
+                  Daily Active Users
+                </p>
                 <MiniTimeSeries data={data.activity.dau} color="bg-blue-600" />
               </div>
               <div>
-                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">New Signups</p>
-                <MiniTimeSeries data={data.activity.newSignups} color="bg-cyan-600" />
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">
+                  New Signups
+                </p>
+                <MiniTimeSeries
+                  data={data.activity.newSignups}
+                  color="bg-cyan-600"
+                />
               </div>
             </div>
             <p className="font-mono text-[9px] text-gray-700">
-              💡 Day-1 retention: % of players who signed up 2-3 days ago who showed any activity since. A rough proxy, not a full cohort analysis.
+              💡 Day-1 retention: % of players who signed up 2-3 days ago who
+              showed any activity since. A rough proxy, not a full cohort
+              analysis.
             </p>
           </div>
 
@@ -3740,16 +4173,23 @@ function AnalyticsTab() {
             </h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Matches by Mode</p>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">
+                  Matches by Mode
+                </p>
                 <MiniBarChart
-                  data={data.gameModes.byMode.map((m) => ({ ...m, color: MODE_COLORS[m.mode] }))}
+                  data={data.gameModes.byMode.map((m) => ({
+                    ...m,
+                    color: MODE_COLORS[m.mode],
+                  }))}
                   labelKey="mode"
                   valueKey="count"
                   color="bg-blue-600"
                 />
               </div>
               <div>
-                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">Top Difficulty Curves</p>
+                <p className="font-mono text-[10px] text-gray-600 uppercase mb-2">
+                  Top Difficulty Curves
+                </p>
                 <MiniBarChart
                   data={data.gameModes.byCurve}
                   labelKey="curve"
@@ -3759,18 +4199,256 @@ function AnalyticsTab() {
               </div>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <StatCard label="Battles (period)" value={data.clanBattles.total} color="text-orange-400" />
-              <StatCard label="Active Now" value={data.clanBattles.active} color="text-yellow-400" />
-              <StatCard label="Completed" value={data.clanBattles.completed} color="text-green-400" />
+              <StatCard
+                label="Battles (period)"
+                value={data.clanBattles.total}
+                color="text-orange-400"
+              />
+              <StatCard
+                label="Active Now"
+                value={data.clanBattles.active}
+                color="text-yellow-400"
+              />
+              <StatCard
+                label="Completed"
+                value={data.clanBattles.completed}
+                color="text-green-400"
+              />
               <StatCard
                 label="Avg Score"
-                value={data.clanBattles.avgScore != null ? data.clanBattles.avgScore : "—"}
+                value={
+                  data.clanBattles.avgScore != null
+                    ? data.clanBattles.avgScore
+                    : "—"
+                }
                 color="text-purple-400"
               />
             </div>
           </div>
         </>
       ) : null}
+    </div>
+  );
+}
+
+function SupportTicketsTab() {
+  const [tickets, setTickets] = useState([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState("open");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [response, setResponse] = useState("");
+  const [respondStatus, setRespondStatus] = useState("resolved");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    load(true);
+  }, [statusFilter, categoryFilter]);
+
+  const load = async (reset = false) => {
+    setLoading(true);
+    const p = reset ? 1 : page;
+    try {
+      const params = new URLSearchParams({ page: p, limit: 30 });
+      if (statusFilter) params.set("status", statusFilter);
+      if (categoryFilter) params.set("category", categoryFilter);
+      const d = await apiJSON(`/support/admin/all?${params}`);
+      setTickets((prev) => (reset ? d.tickets : [...prev, ...d.tickets]));
+      setHasMore(p < d.pages);
+      setPage(p + 1);
+    } catch (_) {
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openTicket = (t) => {
+    setSelected(t);
+    setResponse(t.adminResponse || "");
+    setRespondStatus(t.status === "open" ? "resolved" : t.status);
+  };
+
+  const sendResponse = async () => {
+    if (!response.trim()) return alert("Response message is required");
+    setSending(true);
+    try {
+      await apiJSON(`/support/admin/${selected._id}/respond`, {
+        method: "PATCH",
+        body: JSON.stringify({ response, status: respondStatus }),
+      });
+      setSelected(null);
+      load(true);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const CATEGORY_ICONS = {
+    bug: "🐛",
+    billing: "💳",
+    account: "👤",
+    gameplay: "🎮",
+    other: "❓",
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex gap-2 flex-wrap">
+        <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="input-field text-sm"
+        >
+          <option value="">All statuses</option>
+          <option value="open">Open</option>
+          <option value="in_progress">In Progress</option>
+          <option value="resolved">Resolved</option>
+          <option value="closed">Closed</option>
+        </select>
+        <select
+          value={categoryFilter}
+          onChange={(e) => setCategoryFilter(e.target.value)}
+          className="input-field text-sm"
+        >
+          <option value="">All categories</option>
+          <option value="bug">Bug Report</option>
+          <option value="billing">Billing</option>
+          <option value="account">Account</option>
+          <option value="gameplay">Gameplay</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+
+      <div className="space-y-2">
+        {tickets.length === 0 && !loading ? (
+          <p className="font-mono text-xs text-gray-700 text-center py-8">
+            No tickets match this filter.
+          </p>
+        ) : (
+          tickets.map((t) => (
+            <button
+              key={t._id}
+              onClick={() => openTicket(t)}
+              className="w-full glass-card p-3 flex items-center justify-between gap-3 text-left hover:border-gray-700 border border-transparent transition-colors"
+            >
+              <span className="text-lg flex-shrink-0">
+                {CATEGORY_ICONS[t.category] || "❓"}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="font-mono text-xs text-white truncate">
+                  {t.subject}
+                </p>
+                <p className="font-mono text-[10px] text-gray-600">
+                  {t.username} · {new Date(t.createdAt).toLocaleDateString()}
+                </p>
+              </div>
+              <span
+                className={`font-mono text-[10px] px-1.5 py-0.5 rounded border flex-shrink-0 ${
+                  t.status === "resolved" || t.status === "closed"
+                    ? "text-green-400 border-green-800"
+                    : t.status === "in_progress"
+                      ? "text-yellow-400 border-yellow-800"
+                      : "text-orange-400 border-orange-800"
+                }`}
+              >
+                {t.status.replace("_", " ")}
+              </span>
+            </button>
+          ))
+        )}
+        {hasMore && (
+          <div className="text-center pt-2">
+            <button
+              onClick={() => load(false)}
+              disabled={loading}
+              className="btn-secondary text-sm disabled:opacity-50"
+            >
+              {loading ? "Loading…" : "Load More"}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            onClick={() => setSelected(null)}
+          />
+          <div className="relative z-10 glass-card p-6 w-full max-w-lg max-h-[80vh] overflow-y-auto space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="font-display text-lg font-bold text-white">
+                {selected.subject}
+              </h2>
+              <button
+                onClick={() => setSelected(null)}
+                className="text-gray-600 hover:text-gray-400 text-xl"
+              >
+                ×
+              </button>
+            </div>
+            <p className="font-mono text-xs text-gray-500">
+              {selected.username} ({selected.email}) · {selected.category} ·{" "}
+              {new Date(selected.createdAt).toLocaleString()}
+            </p>
+            <div className="bg-gray-900/50 border border-gray-800 rounded p-3">
+              <p className="font-mono text-xs text-gray-300 whitespace-pre-wrap">
+                {selected.message}
+              </p>
+            </div>
+
+            {selected.adminResponse && (
+              <div className="bg-green-950/20 border border-green-900/50 rounded p-3">
+                <p className="font-mono text-[10px] text-green-500 uppercase mb-1">
+                  Previous response{" "}
+                  {selected.respondedBy?.username
+                    ? `by ${selected.respondedBy.username}`
+                    : ""}
+                </p>
+                <p className="font-mono text-xs text-gray-300">
+                  {selected.adminResponse}
+                </p>
+              </div>
+            )}
+
+            <div>
+              <label className="font-mono text-[10px] text-gray-600 uppercase block mb-1">
+                {selected.adminResponse ? "Update Response" : "Response"}
+              </label>
+              <textarea
+                value={response}
+                onChange={(e) => setResponse(e.target.value)}
+                rows={4}
+                className="input-field w-full text-sm resize-none"
+                placeholder="Type your response — this gets emailed to the player and shown in their ticket history."
+              />
+            </div>
+
+            <div className="flex gap-2 items-center">
+              <select
+                value={respondStatus}
+                onChange={(e) => setRespondStatus(e.target.value)}
+                className="input-field text-sm flex-1"
+              >
+                <option value="in_progress">Mark In Progress</option>
+                <option value="resolved">Mark Resolved</option>
+                <option value="closed">Mark Closed</option>
+              </select>
+              <button
+                onClick={sendResponse}
+                disabled={sending}
+                className="btn-primary flex-1 disabled:opacity-50"
+              >
+                {sending ? "SENDING…" : "SEND RESPONSE"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -4019,6 +4697,7 @@ export default function AdminPage() {
     { id: "broadcast", label: "Broadcast", icon: "📢" },
     { id: "errorLogs", label: "Error Logs", icon: "⚠" },
     { id: "analytics", label: "📊 Analytics" },
+    { id: "support", label: "🎫 Support" },
   ];
 
   return (
@@ -4625,6 +5304,8 @@ export default function AdminPage() {
         {tab === "errorLogs" && <ErrorLogsTab />}
 
         {tab === "analytics" && <AnalyticsTab />}
+
+        {tab === "support" && <SupportTicketsTab />}
       </div>
 
       {banTarget && (

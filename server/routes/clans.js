@@ -18,14 +18,7 @@ const GameSettings = require('../models/GameSettings');
 const { protect, adminOnly } = require('../middleware/auth');
 const notify = require('../utils/notify');
 const logger = require('../utils/logger');
-
-function getPlayerTier(player) {
-  const plan = player.subscription?.plan;
-  if (plan === 'elite') return 'elite';
-  if (plan === 'pro')   return 'pro';
-  if (player.isVerified) return 'verified';
-  return 'free';
-}
+const { getPlayerTier, getTierSettings } = require('../utils/playerTier');
 
 function safeMember(m) { return { playerId: m.playerId, role: m.role, joinedAt: m.joinedAt }; }
 
@@ -125,11 +118,12 @@ router.post('/', protect, async (req, res) => {
     const settings = await GameSettings.getSingleton();
     const fresh = await Player.findById(req.player._id);
     const tier = getPlayerTier(fresh);
+    const tierSettings = getTierSettings(settings, tier);
 
-    if (!settings.clanSettings.creationTiers.includes(tier)) {
-      return res.status(403).json({ error: `Only ${settings.clanSettings.creationTiers.join('/').toUpperCase()} subscribers can create a clan. Upgrade to create your own.` });
+    if (!tierSettings.canCreateClan) {
+      return res.status(403).json({ error: `Your current plan (${tier.toUpperCase()}) doesn't include clan creation. Upgrade to create your own.` });
     }
-    const ownedLimit = settings.clanSettings.ownedClansLimit[tier] ?? 0;
+    const ownedLimit = tierSettings.ownedClansLimit ?? 0;
     const ownedCount = await Clan.countDocuments({ ownerId: req.player._id });
     if (ownedCount >= ownedLimit) {
       return res.status(403).json({ error: `You've reached your limit of ${ownedLimit} clan(s) for the ${tier.toUpperCase()} tier.` });
@@ -407,12 +401,20 @@ router.patch('/admin/settings', protect, adminOnly, async (req, res) => {
     const settings = await GameSettings.getSingleton();
     const { maxMembersPerClan, creationTiers, ownedClansLimit } = req.body;
     if (maxMembersPerClan !== undefined) settings.clanSettings.maxMembersPerClan = maxMembersPerClan;
-    if (creationTiers !== undefined) settings.clanSettings.creationTiers = creationTiers;
-    if (ownedClansLimit !== undefined) {
-      for (const tier of ['free', 'verified', 'pro', 'elite']) {
-        if (ownedClansLimit[tier] !== undefined) settings.clanSettings.ownedClansLimit[tier] = ownedClansLimit[tier];
-      }
+
+    // DEPRECATED: creationTiers/ownedClansLimit used to live in
+    // clanSettings, but that's been superseded by the per-tier
+    // canCreateClan/ownedClansLimit fields in GameSettings.tiers — edit
+    // those via the Tier Settings admin screen (PATCH /admin/tiers)
+    // instead. Silently accepting these here would do nothing (the old
+    // fields no longer exist on the schema), which is worse than telling
+    // you clearly — so this responds with guidance instead of a no-op.
+    if (creationTiers !== undefined || ownedClansLimit !== undefined) {
+      return res.status(410).json({
+        error: 'Clan creation rights and owned-clan limits moved to Tier Settings — use PATCH /admin/tiers instead (per-tier canCreateClan / ownedClansLimit fields).',
+      });
     }
+
     await settings.save();
     res.json({ settings });
   } catch (err) { res.status(400).json({ error: err.message }); }
